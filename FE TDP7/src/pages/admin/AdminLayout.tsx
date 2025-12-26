@@ -11,19 +11,26 @@ import {
   ChevronRight,
   LogOut,
   Menu,
-  X
+  X,
+  MessageSquare,
+  Megaphone
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { pendingRequests } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
-import { MessageSquare } from 'lucide-react'; // Nhớ import icon
 
+// Cấu trúc Menu Sidebar
 const menuItems = [
   { icon: LayoutDashboard, label: 'Thống kê', path: '/admin' },
-  { icon: ClipboardCheck, label: 'Phê duyệt', path: '/admin/approvals', badge: pendingRequests.length },
-  // Đã chuyển Phản ánh xuống dưới Phê duyệt
+  { 
+    icon: ClipboardCheck, 
+    label: 'Phê duyệt', 
+    path: '/admin/approvals', 
+    badge: pendingRequests.filter(r => r.status === 'pending').length 
+  },
+  { icon: Megaphone, label: 'Quản lý thông báo', path: '/admin/news' }, 
   { icon: MessageSquare, label: 'Phản ánh cư dân', path: '/admin/feedback', badge: 3 }, 
   { 
     icon: Users, 
@@ -50,9 +57,10 @@ interface NavItemProps {
   onNavigate?: () => void;
 }
 
+// Component cho từng mục Menu
 function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
   const location = useLocation();
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true); // Mặc định mở các menu con
   
   const hasChildren = 'children' in item && item.children;
   const isActive = item.path ? location.pathname === item.path : 
@@ -60,14 +68,12 @@ function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
 
   if (hasChildren && item.children) {
     return (
-      <div>
+      <div className="mb-1">
         <button
           onClick={() => setIsOpen(!isOpen)}
           className={cn(
-            'flex w-full items-center justify-between rounded-lg px-3 py-2.5 transition-colors',
-            isActive
-              ? 'bg-accent text-accent-foreground font-medium'
-              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            'flex w-full items-center justify-between rounded-lg px-3 py-2 transition-all',
+            isActive ? 'text-primary font-semibold' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
           )}
         >
           <div className="flex items-center gap-3">
@@ -75,7 +81,7 @@ function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
             {!collapsed && <span>{item.label}</span>}
           </div>
           {!collapsed && (
-            <ChevronRight className={cn('h-4 w-4 transition-transform', isOpen && 'rotate-90')} />
+            <ChevronRight className={cn('h-4 w-4 transition-transform duration-200', isOpen && 'rotate-90')} />
           )}
         </button>
         <AnimatePresence>
@@ -84,20 +90,19 @@ function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
               className="overflow-hidden"
             >
-              <div className="ml-8 mt-1 space-y-1">
+              <div className="ml-9 mt-1 space-y-1 border-l-2 border-muted pl-2">
                 {item.children.map((child) => (
                   <Link
                     key={child.path}
                     to={child.path}
                     onClick={onNavigate}
                     className={cn(
-                      'block rounded-lg px-3 py-2 text-sm transition-colors',
+                      'block rounded-md px-3 py-2 text-sm transition-colors',
                       location.pathname === child.path
                         ? 'bg-primary/10 text-primary font-medium'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                     )}
                   >
                     {child.label}
@@ -116,9 +121,9 @@ function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
       to={item.path || '/admin'}
       onClick={onNavigate}
       className={cn(
-        'flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors',
+        'flex items-center justify-between rounded-lg px-3 py-2.5 mb-1 transition-all',
         isActive
-          ? 'bg-accent text-accent-foreground font-medium'
+          ? 'bg-primary/10 text-primary font-semibold'
           : 'text-muted-foreground hover:bg-muted hover:text-foreground'
       )}
     >
@@ -127,7 +132,7 @@ function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
         {!collapsed && <span>{item.label}</span>}
       </div>
       {!collapsed && item.badge && item.badge > 0 && (
-        <Badge variant="destructive" className="h-5 min-w-5 px-1.5 text-xs">
+        <Badge variant="destructive" className="h-5 min-w-5 px-1.5 text-[10px] flex items-center justify-center rounded-full">
           {item.badge}
         </Badge>
       )}
@@ -141,24 +146,22 @@ const AdminLayout = () => {
   const { logout } = useAuth();
   const navigate = useNavigate();
 
-  const closeMobileMenu = () => setMobileMenuOpen(false);
-
   const handleLogout = () => {
     logout();
-    navigate('/'); 
-    closeMobileMenu();
+    navigate('/login');
+    setMobileMenuOpen(false);
   };
 
   const SidebarContent = ({ isMobile = false }: { isMobile?: boolean }) => (
-    <>
-      {/* Logo */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-border">
+    <div className="flex flex-col h-full bg-card">
+      {/* Logo Header */}
+      <div className="h-16 flex items-center justify-between px-4 border-b">
         {(!collapsed || isMobile) && (
           <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">TDP</span>
+            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
+              <span className="text-white font-bold text-xs">TDP</span>
             </div>
-            <span className="font-semibold text-foreground">Quản trị viên</span>
+            <span className="font-bold text-slate-800 tracking-tight">Quản trị viên</span>
           </div>
         )}
         {!isMobile && (
@@ -166,89 +169,76 @@ const AdminLayout = () => {
             variant="ghost"
             size="icon"
             onClick={() => setCollapsed(!collapsed)}
-            className="h-8 w-8"
+            className="h-8 w-8 hover:bg-muted"
           >
             {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </Button>
         )}
         {isMobile && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={closeMobileMenu}
-            className="h-8 w-8"
-          >
-            <X className="h-5 w-5" />
+          <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(false)}>
+            <X className="h-5 w-5 text-muted-foreground" />
           </Button>
         )}
       </div>
 
-      {/* Nav Items */}
-      <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto">
+      {/* Navigation */}
+      <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto scrollbar-hide">
         {menuItems.map((item) => (
           <NavItem 
             key={item.label} 
             item={item} 
             collapsed={isMobile ? false : collapsed}
-            onNavigate={isMobile ? closeMobileMenu : undefined}
+            onNavigate={isMobile ? () => setMobileMenuOpen(false) : undefined}
           />
         ))}
       </nav>
 
-      {/* Footer - NÚT ĐĂNG XUẤT (ĐÃ TÔ ĐỎ) */}
-      <div className="p-2 border-t border-border">
+      {/* Logout Footer */}
+      <div className="p-4 border-t mt-auto">
         <button
           onClick={handleLogout}
           className={cn(
-            'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
-            // Thay đổi class màu sắc ở đây:
-            'text-red-600 hover:bg-red-50 hover:text-red-700' 
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-all group',
+            'text-red-500 hover:bg-red-50 hover:text-red-600'
           )}
         >
-          <LogOut className="h-5 w-5 shrink-0" />
-          {(!collapsed || isMobile) && <span className="font-medium">Đăng xuất</span>}
+          <LogOut className="h-5 w-5 shrink-0 group-hover:scale-110 transition-transform" />
+          {(!collapsed || isMobile) && <span className="font-semibold text-sm">Đăng xuất</span>}
         </button>
       </div>
-    </>
+    </div>
   );
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="min-h-screen bg-slate-50 flex">
       {/* Desktop Sidebar */}
       <aside
         className={cn(
-          'hidden md:flex sticky top-0 h-screen bg-card border-r border-border transition-all duration-300 flex-col',
-          collapsed ? 'w-16' : 'w-64'
+          'hidden md:flex sticky top-0 h-screen border-r bg-white transition-all duration-300 flex-col z-50 shadow-sm',
+          collapsed ? 'w-20' : 'w-64'
         )}
       >
         <SidebarContent />
       </aside>
 
-      {/* Mobile Header */}
-      <div className="fixed top-0 left-0 right-0 z-40 md:hidden gradient-primary">
-        <div className="flex h-14 items-center justify-between px-4">
+      {/* Mobile Top Bar */}
+      <div className="fixed top-0 left-0 right-0 z-40 md:hidden bg-primary px-4 py-3 shadow-md">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
               size="icon"
-              className="text-primary-foreground hover:bg-primary-foreground/10"
+              className="text-white hover:bg-white/10"
               onClick={() => setMobileMenuOpen(true)}
             >
               <Menu className="h-6 w-6" />
             </Button>
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-lg bg-primary-foreground/20 flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-xs">TDP</span>
-              </div>
-              <span className="font-semibold text-primary-foreground">Quản trị</span>
-            </div>
+            <span className="font-bold text-white tracking-tight">Hệ thống Quản lý</span>
           </div>
-          {pendingRequests.length > 0 && (
-            <Link to="/admin/approvals">
-              <Badge variant="destructive" className="animate-pulse">
-                {pendingRequests.length} chờ duyệt
-              </Badge>
-            </Link>
+          {pendingRequests.filter(r => r.status === 'pending').length > 0 && (
+            <Badge variant="destructive" className="animate-pulse bg-white text-red-600 hover:bg-white border-0">
+              {pendingRequests.filter(r => r.status === 'pending').length} chờ duyệt
+            </Badge>
           )}
         </div>
       </div>
@@ -256,34 +246,32 @@ const AdminLayout = () => {
       {/* Mobile Sidebar Overlay */}
       <AnimatePresence>
         {mobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/50 md:hidden"
-            onClick={closeMobileMenu}
-          />
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm md:hidden"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+            <motion.aside
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="fixed left-0 top-0 z-[70] h-full w-[280px] bg-white shadow-2xl flex flex-col md:hidden"
+            >
+              <SidebarContent isMobile />
+            </motion.aside>
+          </>
         )}
       </AnimatePresence>
 
-      {/* Mobile Sidebar */}
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <motion.aside
-            initial={{ x: '-100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '-100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed left-0 top-0 z-50 h-full w-72 bg-card shadow-xl flex flex-col md:hidden"
-          >
-            <SidebarContent isMobile />
-          </motion.aside>
-        )}
-      </AnimatePresence>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto pt-14 md:pt-0">
-        <Outlet />
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <div className="flex-1 overflow-auto pt-16 md:pt-0">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

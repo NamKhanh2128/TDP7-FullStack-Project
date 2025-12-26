@@ -33,6 +33,7 @@ import AssetsPage from "./pages/admin/AssetsPage";
 import BookingsPage from "./pages/admin/BookingsPage";
 import ReportsPage from "./pages/admin/ReportsPage";
 import FeedbackPageManagement from "./pages/admin/FeedbackPageManagement";
+import AdminNewsPage from "./pages/admin/AdminNewsPage";
 
 const queryClient = new QueryClient();
 
@@ -96,6 +97,7 @@ const App = () => (
                  <Route index element={<AdminDashboard />} />
                 <Route path="households" element={<HouseholdsPage />} />
                 <Route path="residents" element={<ResidentsPage />} />
+                <Route path="news" element={<AdminNewsPage />} />
                 <Route path="approvals" element={<ApprovalsPage />} />
                 <Route path="feedback" element={<FeedbackPageManagement />} />
                 <Route path="assets" element={<AssetsPage />} />
