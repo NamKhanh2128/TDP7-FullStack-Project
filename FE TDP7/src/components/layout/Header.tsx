@@ -7,23 +7,35 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useAuth } from '@/contexts/AuthContext';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 
 interface HeaderProps {
-  userName: string;
   notificationCount?: number;
 }
 
-export function Header({ userName, notificationCount = 3 }: HeaderProps) {
+export function Header({ notificationCount = 3 }: HeaderProps) {
+  const { user } = useAuth();
+  
   return (
     <header className="gradient-primary sticky top-0 z-50">
       <div className="container flex h-16 items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-foreground/20">
-            <User className="h-5 w-5 text-primary-foreground" />
-          </div>
+          <Avatar className="h-10 w-10 border-2 border-primary-foreground/20">
+            {user?.avatar ? (
+              <AvatarImage src={user.avatar} alt={user.full_name || 'User'} />
+            ) : null}
+            <AvatarFallback className="bg-primary-foreground/20 text-primary-foreground">
+              {user?.full_name ? (
+                user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+              ) : (
+                <User className="h-5 w-5" />
+              )}
+            </AvatarFallback>
+          </Avatar>
           <div>
             <p className="text-sm text-primary-foreground/80">Xin chào,</p>
-            <p className="font-semibold text-primary-foreground">{userName}</p>
+            <p className="font-semibold text-primary-foreground">{user?.full_name || 'Người dùng'}</p>
           </div>
         </div>
 

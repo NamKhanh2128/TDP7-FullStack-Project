@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { NotificationPopover } from './NotificationPopover';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 
 // --- NAV ITEM HELPER ---
 interface NavItemProps {
@@ -81,7 +82,14 @@ export function Sidebar({ className, onClose }: SidebarProps) {
   const location = useLocation();
   const { user, logout } = useAuth();
 
-  const navItems = [
+  // Menu items cho user thường - CHỈ hiển thị Trang chủ và Thông tin cá nhân
+  const userNavItems = [
+    { icon: Home, label: 'Trang chủ', path: '/dashboard' },
+    { icon: Settings, label: 'Thông tin cá nhân', path: '/dashboard/account' },
+  ];
+
+  // Menu items cho admin (đầy đủ)
+  const adminNavItems = [
     { icon: Home, label: 'Trang chủ', path: '/dashboard' },
     { icon: BookOpen, label: 'Sổ Hộ Khẩu', path: '/dashboard/household' },
     { icon: FileText, label: 'Khai báo', children: [
@@ -92,6 +100,9 @@ export function Sidebar({ className, onClose }: SidebarProps) {
     { icon: Calendar, label: 'Đặt lịch', path: '/dashboard/booking' },
     { icon: MessageSquare, label: 'Phản ánh', path: '/dashboard/feedback' },
   ];
+
+  // Lọc menu items dựa trên role
+  const navItems = user?.role === 'admin' ? adminNavItems : userNavItems;
 
   return (
     <div 
@@ -104,12 +115,21 @@ export function Sidebar({ className, onClose }: SidebarProps) {
       {/* HEADER */}
       <div className="relative flex items-center justify-between p-6 h-20 text-white shadow-md" style={{ background: 'var(--gradient-primary)' }}>
         <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 border border-white/40 backdrop-blur-md">
-            <UserIcon className="h-5 w-5 text-white" />
-          </div>
+          <Avatar className="h-10 w-10 border-2 border-white/40">
+            {user?.avatar ? (
+              <AvatarImage src={user.avatar} alt={user.full_name || 'User'} />
+            ) : null}
+            <AvatarFallback className="bg-white/20 text-white">
+              {user?.full_name ? (
+                user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+              ) : (
+                <UserIcon className="h-5 w-5" />
+              )}
+            </AvatarFallback>
+          </Avatar>
           <div className="min-w-0 hidden sm:block md:block">
             <h2 className="font-bold text-base truncate">{user?.full_name || 'Cư dân'}</h2>
-            <p className="text-xs text-white/90">Cư dân</p>
+            <p className="text-xs text-white/90">{user?.role === 'admin' ? 'Quản trị viên' : 'Cư dân'}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">

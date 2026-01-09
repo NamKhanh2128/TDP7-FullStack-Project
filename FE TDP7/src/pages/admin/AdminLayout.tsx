@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -18,20 +18,20 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { pendingRequests } from '@/data/mockData';
 import { useAuth } from '@/contexts/AuthContext';
+import { getDashboardStatsAPI } from '@/services/apiService';
 
-// Cấu trúc Menu Sidebar
-const menuItems = [
+// Cấu trúc Menu Sidebar (badge sẽ được cập nhật động)
+const getMenuItems = (counts: { requests: number; feedback: number }) => [
   { icon: LayoutDashboard, label: 'Thống kê', path: '/admin' },
   { 
     icon: ClipboardCheck, 
     label: 'Phê duyệt', 
     path: '/admin/approvals', 
-    badge: pendingRequests.filter(r => r.status === 'pending').length 
+    badge: counts.requests 
   },
   { icon: Megaphone, label: 'Quản lý thông báo', path: '/admin/news' }, 
-  { icon: MessageSquare, label: 'Phản ánh cư dân', path: '/admin/feedback', badge: 3 }, 
+  { icon: MessageSquare, label: 'Phản ánh cư dân', path: '/admin/feedback', badge: counts.feedback }, 
   { 
     icon: Users, 
     label: 'Quản lý Dân cư', 
@@ -52,7 +52,7 @@ const menuItems = [
 ];
 
 interface NavItemProps {
-  item: typeof menuItems[0];
+  item: ReturnType<typeof getMenuItems>[0];
   collapsed: boolean;
   onNavigate?: () => void;
 }
@@ -131,7 +131,7 @@ function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
         <item.icon className={cn('h-5 w-5 shrink-0', isActive && 'text-primary')} />
         {!collapsed && <span>{item.label}</span>}
       </div>
-      {!collapsed && item.badge && item.badge > 0 && (
+      {!collapsed && item.badge !== undefined && item.badge > 0 && (
         <Badge variant="destructive" className="h-5 min-w-5 px-1.5 text-[10px] flex items-center justify-center rounded-full">
           {item.badge}
         </Badge>
@@ -143,14 +143,48 @@ function NavItem({ item, collapsed, onNavigate }: NavItemProps) {
 const AdminLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
+  
+  // State để lưu số lượng thông báo
+  const [counts, setCounts] = useState<{ requests: number; feedback: number }>({
+    requests: 0,
+    feedback: 0,
+  });
+
+  // Fetch dữ liệu từ API khi component mount
+  useEffect(() => {
+    const fetchCounts = async () => {
+      try {
+        const response = await getDashboardStatsAPI();
+        if (response.success && response.data) {
+          setCounts({
+            requests: response.data.pending_requests || 0,
+            feedback: response.data.pending_feedback || 0,
+          });
+        }
+      } catch (error: any) {
+        console.error('Error fetching dashboard stats:', error);
+        // Không hiển thị lỗi, chỉ log để không ảnh hưởng đến UI
+      }
+    };
+
+    fetchCounts();
+    
+    // Refresh counts mỗi 30 giây để cập nhật số lượng mới
+    const interval = setInterval(fetchCounts, 30000);
+    
+    return () => clearInterval(interval);
+  }, []);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
     setMobileMenuOpen(false);
   };
+  
+  // Tính toán menuItems với counts mới nhất
+  const menuItems = getMenuItems(counts);
 
   const SidebarContent = ({ isMobile = false }: { isMobile?: boolean }) => (
     <div className="flex flex-col h-full bg-card">
@@ -181,9 +215,9 @@ const AdminLayout = () => {
         )}
       </div>
 
-      {/* Navigation */}
+      {/* Navigation - Chỉ hiển thị menu nếu user là admin */}
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto scrollbar-hide">
-        {menuItems.map((item) => (
+        {user?.role === 'admin' && menuItems.map((item) => (
           <NavItem 
             key={item.label} 
             item={item} 
@@ -235,9 +269,9 @@ const AdminLayout = () => {
             </Button>
             <span className="font-bold text-white tracking-tight">Hệ thống Quản lý</span>
           </div>
-          {pendingRequests.filter(r => r.status === 'pending').length > 0 && (
+          {counts.requests > 0 && (
             <Badge variant="destructive" className="animate-pulse bg-white text-red-600 hover:bg-white border-0">
-              {pendingRequests.filter(r => r.status === 'pending').length} chờ duyệt
+              {counts.requests} chờ duyệt
             </Badge>
           )}
         </div>

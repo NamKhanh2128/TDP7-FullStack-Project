@@ -8,6 +8,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -16,14 +17,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { User, CreditCard, MapPin, Upload, CalendarDays } from 'lucide-react';
+import { User, CreditCard, MapPin, Upload, CalendarDays, Loader2, FileText } from 'lucide-react';
+import { createRequestAPI } from '@/services/apiService';
 
 interface TamTruFormProps {
   open: boolean;
   onClose: () => void;
+  onSuccess?: () => void;
 }
 
-export function TamTruForm({ open, onClose }: TamTruFormProps) {
+export function TamTruForm({ open, onClose, onSuccess }: TamTruFormProps) {
   const { toast } = useToast();
   const [formData, setFormData] = useState({
     fullName: '',
@@ -31,10 +34,13 @@ export function TamTruForm({ open, onClose }: TamTruFormProps) {
     gender: '',
     idCard: '',
     permanentAddress: '',
+    reason: '',
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = () => {
-    if (!formData.fullName || !formData.dob || !formData.gender || !formData.idCard || !formData.permanentAddress) {
+  const handleSubmit = async () => {
+    // Validation
+    if (!formData.fullName || !formData.dob || !formData.gender || !formData.idCard || !formData.permanentAddress || !formData.reason) {
       toast({
         title: 'Lỗi',
         description: 'Vui lòng điền đầy đủ thông tin bắt buộc',
@@ -43,18 +49,72 @@ export function TamTruForm({ open, onClose }: TamTruFormProps) {
       return;
     }
 
-    toast({
-      title: 'Thành công',
-      description: 'Đã gửi khai báo tạm trú thành công!',
-    });
-    onClose();
-    setFormData({
-      fullName: '',
-      dob: '',
-      gender: '',
-      idCard: '',
-      permanentAddress: '',
-    });
+    setIsSubmitting(true);
+
+    try {
+      // 1. Thu thập dữ liệu từ Form
+      const name = formData.fullName.trim();
+      const dob = formData.dob;
+      const gender = formData.gender;
+      const cccd = formData.idCard.trim();
+      const hometown = formData.permanentAddress.trim();
+      const reason = formData.reason.trim();
+
+      // 2. Tạo chuỗi thông tin chi tiết (dùng \n để xuống dòng)
+      const combinedInfo = `Họ và tên: ${name}
+Sinh ngày: ${new Date(dob).toLocaleDateString('vi-VN')}
+Giới tính: ${gender}
+Số CCCD: ${cccd}
+Quê quán: ${hometown}
+Lý do tạm trú: ${reason || 'Không ghi rõ'}`;
+
+      // 3. Gửi API
+      const payload = {
+        type: 'TamTru',
+        reason: combinedInfo, // QUAN TRỌNG: Gán chuỗi combinedInfo vào biến reason
+        start_date: new Date().toISOString().split('T')[0], // Format YYYY-MM-DD cho Backend
+        end_date: null
+      };
+
+      // Gọi API POST /api/requests
+      const response = await createRequestAPI(payload);
+
+      if (response.success) {
+        toast({
+          title: 'Thành công',
+          description: response.message || 'Đã gửi khai báo tạm trú thành công!',
+        });
+        
+        // Reset form
+        setFormData({
+          fullName: '',
+          dob: '',
+          gender: '',
+          idCard: '',
+          permanentAddress: '',
+          reason: '',
+        });
+
+        // Gọi callback để refresh danh sách
+        if (onSuccess) {
+          onSuccess();
+        }
+        
+        // Đóng modal
+        onClose();
+      } else {
+        throw new Error(response.message || 'Không thể gửi yêu cầu');
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi gửi yêu cầu tạm trú:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể gửi yêu cầu. Vui lòng thử lại.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -148,6 +208,20 @@ export function TamTruForm({ open, onClose }: TamTruFormProps) {
 
           <div className="space-y-2">
             <Label className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary" />
+              Lý do tạm trú <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              placeholder="Ví dụ: Đi học đại học, Làm công nhân, Thăm người nhà..."
+              value={formData.reason}
+              onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+              className="min-h-[80px] bg-background"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2">
               <Upload className="h-4 w-4 text-primary" />
               Ảnh CCCD
             </Label>
@@ -165,11 +239,28 @@ export function TamTruForm({ open, onClose }: TamTruFormProps) {
         </div>
 
         <div className="mt-6 flex gap-3">
-          <Button variant="outline" onClick={onClose} className="flex-1">
+          <Button 
+            variant="outline" 
+            onClick={onClose} 
+            className="flex-1"
+            disabled={isSubmitting}
+          >
             Hủy
           </Button>
-          <Button variant="gradient" onClick={handleSubmit} className="flex-1">
-            Gửi khai báo
+          <Button 
+            variant="gradient" 
+            onClick={handleSubmit} 
+            className="flex-1"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Đang gửi...
+              </>
+            ) : (
+              'Gửi khai báo'
+            )}
           </Button>
         </div>
       </DialogContent>

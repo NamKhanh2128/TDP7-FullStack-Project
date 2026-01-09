@@ -1,81 +1,172 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext'; // Đảm bảo đường dẫn đúng tới Context của bạn
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Building2, Mail, Lock, Eye, EyeOff, Loader2, ArrowLeft } from 'lucide-react';
+import { Building2, Mail, Lock, Eye, EyeOff, Loader2, ArrowLeft, AlertCircle } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function LoginPage() {
-  const [form, setForm] = useState({ email: '', password: '' });
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  
-  // Lấy hàm login và trạng thái loading từ AuthContext
-  // Lưu ý: Dùng 'as any' nếu TypeScript báo lỗi type chưa khớp, 
-  // nhưng tốt nhất là define type trong AuthContext
-  const { login, isLoading } = useAuth() as any; 
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { login, isLoading: authLoading } = useAuth();
 
   // Xử lý thay đổi input
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEmail(e.target.value);
+    // Xóa thông báo lỗi khi user bắt đầu nhập lại
+    if (errorMessage) {
+      setErrorMessage('');
+    }
+  };
+
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value);
+    // Xóa thông báo lỗi khi user bắt đầu nhập lại
+    if (errorMessage) {
+      setErrorMessage('');
+    }
   };
 
   // Xử lý Submit Form
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault(); // Dòng 1: Bắt buộc
+    console.log("Đã bấm nút submit!"); // Dòng 2: Debug log
+    
+    setErrorMessage(''); // Reset error message
 
-    // 1. Validate cơ bản
-    if (!form.email || !form.password) {
-      toast({ 
-        variant: 'destructive', 
-        title: 'Thiếu thông tin', 
-        description: 'Vui lòng nhập đầy đủ email và mật khẩu' 
-      });
+    // Validate cơ bản
+    if (!email || !password) {
+      setErrorMessage('Vui lòng nhập đầy đủ email và mật khẩu');
       return;
     }
 
-    try {
-      // 2. Gọi hàm login từ Context
-      const res = await login({ email: form.email, password: form.password });
+    setLoading(true);
 
-      // 3. Xử lý kết quả trả về
-      if (res?.success) {
+    try {
+      // Dòng 3: Gọi hàm login từ AuthContext (thay vì loginAPI trực tiếp)
+      // Hàm này sẽ tự động gọi API, lưu vào localStorage và cập nhật state
+      console.log('Đang gọi login từ AuthContext với:', { email });
+      const result = await login({ email, password });
+      console.log('Kết quả từ login:', result);
+
+      // Xử lý kết quả thành công
+      if (result.success && result.accessToken) {
+        console.log('Đăng nhập thành công, state đã được cập nhật trong AuthContext');
+
+        // Lấy status từ result (có thể từ result.status hoặc result.user?.status)
+        const userStatus = result.status || result.user?.status;
+
+        // Kiểm tra status để quyết định điều hướng
+        if (userStatus === 'pending') {
+          // Tài khoản chưa được duyệt -> Chuyển đến trang pending
+          toast({
+            title: "Tài khoản chưa được duyệt",
+            description: "Tài khoản của bạn đang chờ phê duyệt từ quản trị viên.",
+            variant: 'default',
+          });
+          navigate('/pending');
+          return; // Dừng xử lý, không navigate đến trang chủ
+        }
+
+        if (userStatus === 'blocked') {
+          // Tài khoản bị khóa -> Hiển thị lỗi
+          const errorMsg = 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.';
+          setErrorMessage(errorMsg);
+          toast({ 
+            variant: 'destructive', 
+            title: 'Tài khoản bị khóa', 
+            description: errorMsg
+          });
+          return; // Dừng xử lý, không navigate
+        }
+
+        // Status là 'active' hoặc không có status (mặc định active) -> Điều hướng bình thường
+        // Hiển thị thông báo thành công
         toast({
           title: "Đăng nhập thành công",
-          description: `Chào mừng quay trở lại, ${res.user?.full_name || 'bạn'}!`,
+          description: `Chào mừng quay trở lại, ${result.user?.full_name || 'bạn'}!`,
         });
 
-        // --- LOGIC ĐIỀU HƯỚNG QUAN TRỌNG ---
-        if (res.role === 'admin') {
+        // Chuyển hướng dựa trên role
+        const userRole = result.user?.role || result.role;
+        
+        if (userRole === 'admin') {
           navigate('/admin'); // Admin -> Trang quản trị
         } else {
-          navigate('/dashboard'); // User -> Trang Dashboard cá nhân
+          navigate('/'); // User -> Trang chủ
         }
-        // -----------------------------------
-
-      } else if (res?.status === 'pending') {
-        // Tài khoản chưa được duyệt
-        navigate('/pending');
       } else {
-        // Lỗi từ server (sai pass, không tồn tại...)
+        // Xử lý trường hợp đăng nhập thất bại
+        // Kiểm tra xem có phải lỗi pending không
+        if (result.status === 'pending') {
+          toast({
+            title: "Tài khoản chưa được duyệt",
+            description: "Tài khoản của bạn đang chờ phê duyệt từ quản trị viên.",
+            variant: 'default',
+          });
+          navigate('/pending');
+          return;
+        }
+
+        const errorMsg = result.error || result.message || 'Đăng nhập thất bại. Vui lòng thử lại.';
+        setErrorMessage(errorMsg);
+        console.error('Đăng nhập thất bại:', errorMsg);
+        
         toast({ 
           variant: 'destructive', 
           title: 'Đăng nhập thất bại', 
-          description: res?.error || 'Email hoặc mật khẩu không chính xác.' 
+          description: errorMsg
         });
       }
-    } catch (err) {
-      console.error(err);
+    } catch (error: any) {
+      // Xử lý lỗi từ server
+      console.error('Login error:', error);
+      
+      // Kiểm tra xem có phải lỗi pending không (từ backend trả về 403 với status: 'pending')
+      if (error.status === 'pending' || error.response?.data?.status === 'pending') {
+        toast({
+          title: "Tài khoản chưa được duyệt",
+          description: "Tài khoản của bạn đang chờ phê duyệt từ quản trị viên.",
+          variant: 'default',
+        });
+        navigate('/pending');
+        setLoading(false);
+        return;
+      }
+
+      // Kiểm tra xem có phải tài khoản bị blocked không
+      if (error.status === 'blocked' || error.response?.data?.status === 'blocked') {
+        const errorMsg = 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên.';
+        setErrorMessage(errorMsg);
+        toast({ 
+          variant: 'destructive', 
+          title: 'Tài khoản bị khóa', 
+          description: errorMsg
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Xử lý các lỗi khác
+      const errorMsg = error.message || error.error || error.response?.data?.message || 'Email hoặc mật khẩu không chính xác';
+      setErrorMessage(errorMsg);
+      
       toast({ 
         variant: 'destructive', 
-        title: 'Lỗi hệ thống', 
-        description: 'Đã có lỗi xảy ra. Vui lòng thử lại sau.' 
+        title: 'Đăng nhập thất bại', 
+        description: errorMsg
       });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -103,8 +194,16 @@ export default function LoginPage() {
         </CardHeader>
 
         <CardContent className="pt-6">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleLogin} className="space-y-5" noValidate>
             
+            {/* Error Message */}
+            {errorMessage && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
             {/* Email Field */}
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium">Email</Label>
@@ -115,11 +214,12 @@ export default function LoginPage() {
                   name="email" 
                   type="email" 
                   placeholder="name@example.com" 
-                  value={form.email} 
-                  onChange={handleChange} 
+                  value={email} 
+                  onChange={handleEmailChange} 
                   className="pl-10 h-11 bg-white/50 focus:bg-white transition-all border-muted-foreground/20"
-                  disabled={isLoading}
+                  disabled={loading || authLoading}
                   autoComplete="email"
+                  required
                 />
               </div>
             </div>
@@ -142,11 +242,12 @@ export default function LoginPage() {
                   name="password" 
                   type={showPassword ? 'text' : 'password'} 
                   placeholder="••••••" 
-                  value={form.password} 
-                  onChange={handleChange} 
+                  value={password} 
+                  onChange={handlePasswordChange} 
                   className="pl-10 pr-10 h-11 bg-white/50 focus:bg-white transition-all border-muted-foreground/20"
-                  disabled={isLoading}
+                  disabled={loading || authLoading}
                   autoComplete="current-password"
+                  required
                 />
                 <button 
                   type="button" 
@@ -161,11 +262,11 @@ export default function LoginPage() {
 
             {/* Submit Button */}
             <Button 
-              type="submit" 
+              type="submit"
               className="w-full h-11 text-base font-semibold gradient-primary-bg hover:opacity-90 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200" 
-              disabled={isLoading}
+              disabled={loading || authLoading}
             >
-              {isLoading ? (
+              {(loading || authLoading) ? (
                 <>
                   <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   Đang xử lý...

@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { 
   Package, Edit3, AlertTriangle, Building2, Plus, 
   Search, CheckCircle2, Save, X, 
   MapPin, Settings2, Trash2, LayoutGrid, Users, 
-  Ruler, UserCircle, ShieldCheck
+  Ruler, UserCircle, ShieldCheck, Loader2, CreditCard
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,40 +26,32 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { getLocationsAPI, getEquipmentsAPI, createFacilityAPI, updateFacilityAPI, deleteFacilityAPI } from '@/services/apiService';
 
-// --- 1. DỮ LIỆU MẪU (Giữ nguyên) ---
-const initialLocations = [
-  { 
-    id: 'loc-1', name: 'Hội trường chính', code: 'HT-01',
-    capacity: 200, area: 150, type: 'Indoor',
-    manager: 'Nguyễn Văn A', status: 'Available', floor: 'Tầng 1' 
-  },
-  { 
-    id: 'loc-2', name: 'Sân bóng chuyền', code: 'SB-01',
-    capacity: 20, area: 300, type: 'Outdoor',
-    manager: 'Trần Văn B', status: 'Maintenance', floor: 'Sân sau' 
-  },
-  { 
-    id: 'loc-3', name: 'Phòng CLB thơ', code: 'PH-02',
-    capacity: 40, area: 45, type: 'Indoor',
-    manager: 'Lê Thị C', status: 'Available', floor: 'Tầng 2' 
-  },
-];
-
-const initialEquipments = [
-  { id: 'eq-1', name: 'Loa JBL PartyBox', code: 'AS-001', category: 'Âm thanh', location: 'Hội trường chính', total: 2, broken: 0, notes: 'Mới nhập 2024' },
-  { id: 'eq-2', name: 'Bàn Inox Hòa Phát', code: 'AS-002', category: 'Nội thất', location: 'Kho Tầng 1', total: 50, broken: 3, notes: 'Chân lỏng lẻo' },
-  { id: 'eq-3', name: 'Lưới bóng chuyền', code: 'AS-003', category: 'Thể thao', location: 'Sân bóng chuyền', total: 2, broken: 1, notes: 'Cần thay lưới mới' },
-  { id: 'eq-4', name: 'Máy chiếu Sony 4K', code: 'AS-004', category: 'Điện tử', location: 'Hội trường chính', total: 1, broken: 0, notes: 'Hoạt động tốt' },
-];
+// Interface cho dữ liệu từ API
+interface Facility {
+  id: string;
+  name: string;
+  description?: string;
+  capacity?: number;
+  area?: number;
+  location?: string;
+  status?: string;
+  type?: string;
+  asset_value?: number;
+  quantity?: number;
+  price?: number;
+  created_at?: string;
+}
 
 const AssetsPage = () => {
   const { toast } = useToast();
   
   // States
-  const [locations, setLocations] = useState(initialLocations);
-  const [equipments, setEquipments] = useState(initialEquipments);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState<'locations' | 'equipments'>('locations');
 
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -71,73 +63,212 @@ const AssetsPage = () => {
   // Form State
   const [formData, setFormData] = useState<any>({});
 
-  // Stats Logic
-  const stats = useMemo(() => {
-    const totalEq = equipments.reduce((sum, a) => sum + a.total, 0);
-    const brokenEq = equipments.reduce((sum, a) => sum + a.broken, 0);
-    return { 
-      totalEq, brokenEq, goodEq: totalEq - brokenEq, 
-      totalLoc: locations.length,
-      maintenanceLoc: locations.filter(l => l.status === 'Maintenance').length 
+  // Fetch dữ liệu từ API dựa trên tab active
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        let response;
+        if (activeTab === 'locations') {
+          response = await getLocationsAPI();
+        } else {
+          response = await getEquipmentsAPI();
+        }
+        
+        if (response.success && response.data) {
+          setFacilities(response.data);
+        } else {
+          setFacilities([]);
+        }
+      } catch (error: any) {
+        console.error('Error fetching data:', error);
+        toast({
+          title: 'Lỗi',
+          description: error.message || `Không thể tải danh sách ${activeTab === 'locations' ? 'địa điểm' : 'thiết bị'}`,
+          variant: 'destructive',
+        });
+        setFacilities([]);
+      } finally {
+        setIsLoading(false);
+      }
     };
-  }, [equipments, locations]);
 
-  // Handlers (Giữ nguyên logic)
+    fetchData();
+  }, [activeTab]);
+
+  // Stats Logic - Tính toán dựa trên tab active
+  const stats = useMemo(() => {
+    if (activeTab === 'locations') {
+      return { 
+        total: facilities.length,
+        maintenance: facilities.filter(f => f.status === 'Maintenance').length 
+      };
+    } else {
+      // Tính tổng số lượng thiết bị thực tế (sum của quantity)
+      const totalQuantity = facilities.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      return { 
+        total: totalQuantity,
+        maintenance: facilities.filter(f => f.status === 'Maintenance').length 
+      };
+    }
+  }, [facilities, activeTab]);
+
+  // Handlers
   const handleOpenAdd = (type: 'location' | 'equipment') => {
     setModalType(type);
     setEditingItem(null);
-    setFormData(type === 'location' 
-      ? { name: '', code: '', capacity: '', area: '', type: 'Indoor', manager: '', floor: '', status: 'Available' }
-      : { name: '', code: '', category: '', location: '', total: 0, broken: 0, notes: '' }
-    );
+    if (type === 'location') {
+      setFormData({ 
+        name: '', 
+        description: '', 
+        capacity: '', 
+        area: '',
+        location: '', 
+        status: 'Available',
+        type: 'PhongHop',
+        price: ''
+      });
+    } else {
+      setFormData({ 
+        name: '', 
+        description: '', 
+        quantity: '', 
+        asset_value: '',
+        status: 'Available',
+        type: 'ThietBi',
+        price: ''
+      });
+    }
     setIsModalOpen(true);
   };
 
-  const handleOpenEdit = (item: any, type: 'location' | 'equipment') => {
-    setModalType(type);
+  const handleOpenEdit = (item: Facility) => {
+    // Xác định type dựa trên item
+    const isLocation = item.type && ['PhongHop', 'TheThao', 'SanBai'].includes(item.type);
+    setModalType(isLocation ? 'location' : 'equipment');
     setEditingItem(item);
-    setFormData({ ...item });
+    
+    if (isLocation) {
+      setFormData({ 
+        name: item.name || '',
+        description: item.description || '',
+        capacity: item.capacity?.toString() || '',
+        area: item.area?.toString() || '',
+        location: item.location || '',
+        status: item.status || 'Available',
+        type: item.type || 'PhongHop',
+        price: item.price?.toString() || ''
+      });
+    } else {
+      setFormData({ 
+        name: item.name || '',
+        description: item.description || '',
+        quantity: item.quantity?.toString() || '',
+        asset_value: item.asset_value?.toString() || '',
+        status: item.status || 'Available',
+        type: item.type || 'ThietBi',
+        price: item.price?.toString() || ''
+      });
+    }
     setIsModalOpen(true);
   };
 
-  const handleSave = () => {
-    if (!formData.name || !formData.code) {
-      toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tên và mã quản lý.", variant: "destructive" });
+  const handleSave = async () => {
+    if (!formData.name) {
+      toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tên tài sản.", variant: "destructive" });
       return;
     }
 
-    if (modalType === 'location') {
-      const newLoc = { 
-        ...formData, 
-        id: editingItem?.id || `loc-${Date.now()}`,
-        capacity: Number(formData.capacity),
-        area: Number(formData.area)
+    try {
+      let payload: any = {
+        name: formData.name,
+        description: formData.description || null,
+        status: formData.status || 'Available',
+        type: formData.type || null,
+        price: formData.price ? parseFloat(formData.price) : null
       };
-      setLocations(prev => editingItem ? prev.map(l => l.id === editingItem.id ? newLoc : l) : [...prev, newLoc]);
-    } else {
-      const newEq = { 
-        ...formData, 
-        id: editingItem?.id || `eq-${Date.now()}`,
-        total: Number(formData.total),
-        broken: Number(formData.broken)
-      };
-      setEquipments(prev => editingItem ? prev.map(e => e.id === editingItem.id ? newEq : e) : [...prev, newEq]);
+
+      if (modalType === 'location') {
+        payload.capacity = formData.capacity ? parseInt(formData.capacity) : null;
+        payload.area = formData.area ? parseFloat(formData.area) : null;
+        payload.location = formData.location || null;
+      } else {
+        payload.quantity = formData.quantity ? parseInt(formData.quantity) : null;
+        payload.asset_value = formData.asset_value ? parseFloat(formData.asset_value) : null;
+      }
+
+      let response;
+      if (editingItem) {
+        // Update
+        response = await updateFacilityAPI(editingItem.id, payload);
+      } else {
+        // Create
+        response = await createFacilityAPI(payload);
+      }
+
+      if (response.success) {
+        toast({ 
+          title: "Thành công", 
+          description: editingItem ? "Đã cập nhật thông tin tài sản." : "Đã thêm tài sản mới." 
+        });
+        setIsModalOpen(false);
+        
+        // Reload data based on active tab
+        let reloadResponse;
+        if (activeTab === 'locations') {
+          reloadResponse = await getLocationsAPI();
+        } else {
+          reloadResponse = await getEquipmentsAPI();
+        }
+        
+        if (reloadResponse.success && reloadResponse.data) {
+          setFacilities(reloadResponse.data);
+        }
+      }
+    } catch (error: any) {
+      console.error('Error saving facility:', error);
+      toast({ 
+        title: "Lỗi", 
+        description: error.message || "Không thể lưu dữ liệu.", 
+        variant: "destructive" 
+      });
     }
-    toast({ title: "Thành công", description: "Dữ liệu đã được lưu vào hệ thống." });
-    setIsModalOpen(false);
   };
 
-  const confirmDelete = (id: string, type: 'location' | 'equipment') => {
-    setItemToDelete({ id, type });
+  const confirmDelete = (id: string) => {
+    setItemToDelete({ id, type: 'location' });
     setIsDeleteAlertOpen(true);
   };
 
-  const handleDelete = () => {
-    if (itemToDelete?.type === 'location') setLocations(prev => prev.filter(l => l.id !== itemToDelete.id));
-    else setEquipments(prev => prev.filter(e => e.id !== itemToDelete?.id));
+  const handleDelete = async () => {
+    if (!itemToDelete) return;
     
-    setIsDeleteAlertOpen(false);
-    toast({ title: "Đã xóa", description: "Mục đã được gỡ bỏ khỏi danh sách." });
+    try {
+      const response = await deleteFacilityAPI(itemToDelete.id);
+      if (response.success) {
+        setIsDeleteAlertOpen(false);
+        toast({ title: "Đã xóa", description: "Mục đã được gỡ bỏ khỏi danh sách." });
+        
+        // Reload data based on active tab
+        let reloadResponse;
+        if (activeTab === 'locations') {
+          reloadResponse = await getLocationsAPI();
+        } else {
+          reloadResponse = await getEquipmentsAPI();
+        }
+        
+        if (reloadResponse.success && reloadResponse.data) {
+          setFacilities(reloadResponse.data);
+        }
+      }
+    } catch (error: any) {
+      console.error('Error deleting facility:', error);
+      toast({ 
+        title: "Lỗi", 
+        description: error.message || "Không thể xóa tài sản.", 
+        variant: "destructive" 
+      });
+    }
   };
 
   return (
@@ -152,13 +283,13 @@ const AssetsPage = () => {
           </p>
         </div>
         <div className="flex gap-3 w-full md:w-auto">
-          {/* Nút chính dùng gradient-primary */}
-          <Button onClick={() => handleOpenAdd('location')} className="flex-1 md:flex-none gradient-primary text-primary-foreground h-11 px-6 rounded-xl shadow-soft transition-all font-semibold border-none">
-            <Plus className="h-5 w-5 mr-2" /> Thêm địa điểm
-          </Button>
-          {/* Nút phụ dùng outline hoặc secondary */}
-          <Button onClick={() => handleOpenAdd('equipment')} variant="outline" className="flex-1 md:flex-none border-primary/20 text-primary hover:bg-primary/5 h-11 px-6 rounded-xl font-semibold">
-            <Plus className="h-5 w-5 mr-2" /> Nhập thiết bị
+          {/* Nút thêm mới dựa trên tab active */}
+          <Button 
+            onClick={() => handleOpenAdd(activeTab === 'locations' ? 'location' : 'equipment')} 
+            className="flex-1 md:flex-none gradient-primary text-primary-foreground h-11 px-6 rounded-xl shadow-soft transition-all font-semibold border-none"
+          >
+            <Plus className="h-5 w-5 mr-2" /> 
+            {activeTab === 'locations' ? 'Thêm địa điểm' : 'Nhập thiết bị'}
           </Button>
         </div>
       </div>
@@ -166,10 +297,20 @@ const AssetsPage = () => {
       {/* STATS - Màu sắc theo biến CSS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Tổng thiết bị', val: stats.totalEq, icon: Package, color: 'text-primary', bg: 'bg-primary/10' },
-          { label: 'Số lượng địa điểm', val: stats.totalLoc, icon: LayoutGrid, color: 'text-secondary', bg: 'bg-secondary/10' },
-          { label: 'Địa điểm bảo trì', val: stats.maintenanceLoc, icon: AlertTriangle, color: 'text-warning', bg: 'bg-warning/10' },
-          { label: 'Thiết bị hỏng', val: stats.brokenEq, icon: Trash2, color: 'text-destructive', bg: 'bg-destructive/10' },
+          { 
+            label: activeTab === 'locations' ? 'Số lượng địa điểm' : 'Số lượng thiết bị', 
+            val: stats.total, 
+            icon: activeTab === 'locations' ? LayoutGrid : Package, 
+            color: activeTab === 'locations' ? 'text-secondary' : 'text-secondary', 
+            bg: activeTab === 'locations' ? 'bg-secondary/10' : 'bg-secondary/10' 
+          },
+          { 
+            label: activeTab === 'locations' ? 'Địa điểm bảo trì' : 'Thiết bị đang bảo trì', 
+            val: stats.maintenance, 
+            icon: AlertTriangle, 
+            color: 'text-warning', 
+            bg: 'bg-warning/10' 
+          },
         ].map((stat, i) => (
           <Card key={i} className="border-border shadow-card rounded-2xl overflow-hidden hover:shadow-soft transition-shadow bg-card">
             <CardContent className="p-6 flex items-center gap-5">
@@ -186,7 +327,7 @@ const AssetsPage = () => {
       </div>
 
       {/* TABS & SEARCH */}
-      <Tabs defaultValue="locations" className="w-full space-y-6">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'locations' | 'equipments')} className="w-full space-y-6">
         <div className="flex flex-col lg:flex-row justify-between items-center gap-4 bg-card p-2 rounded-2xl border border-border shadow-card">
           <TabsList className="bg-muted p-1 rounded-xl h-12 w-full lg:w-auto grid grid-cols-2 lg:flex">
             <TabsTrigger value="locations" className="px-8 rounded-lg font-bold text-sm data-[state=active]:bg-card data-[state=active]:text-primary data-[state=active]:shadow-sm transition-all">
@@ -210,127 +351,186 @@ const AssetsPage = () => {
 
         {/* TAB 1: LOCATIONS */}
         <TabsContent value="locations" className="mt-0">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {locations.filter(l => l.name.toLowerCase().includes(searchTerm.toLowerCase())).map((loc) => (
-              <Card key={loc.id} className="group border-border shadow-card rounded-3xl overflow-hidden hover:shadow-soft transition-all border-t-4 border-t-primary bg-card flex flex-col justify-between">
-                <CardContent className="p-7 space-y-5">
-                  <div className="flex justify-between items-start">
-                    <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-inner">
-                      <Building2 className="h-6 w-6" />
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground mr-2" />
+              <span className="text-sm text-muted-foreground">Đang tải danh sách tài sản...</span>
+            </div>
+          ) : facilities.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground bg-muted/10 rounded-xl border border-dashed">
+              <Building2 className="w-12 h-12 mb-3 opacity-20" />
+              <p className="text-sm">Chưa có tài sản nào</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {facilities.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase())).map((facility) => (
+                <Card key={facility.id} className="group border-border shadow-card rounded-3xl overflow-hidden hover:shadow-soft transition-all border-t-4 border-t-primary bg-card flex flex-col justify-between">
+                  <CardContent className="p-7 space-y-5">
+                    <div className="flex justify-between items-start">
+                      <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-inner">
+                        <Building2 className="h-6 w-6" />
+                      </div>
+                      {/* Badge trạng thái */}
+                      <Badge className={cn(
+                        "border-none font-bold px-3 py-1 rounded-lg text-[10px] uppercase tracking-wider shadow-sm",
+                        (facility.status === 'Available' && facility.maintenance_status !== 'Maintenance') 
+                          ? "bg-success/10 text-success" 
+                          : "bg-warning/10 text-warning"
+                      )}>
+                        {(facility.status === 'Available' && facility.maintenance_status !== 'Maintenance') ? 'Sẵn sàng' : 'Bảo trì'}
+                      </Badge>
                     </div>
-                    {/* Badge trạng thái */}
-                    <Badge className={cn(
-                      "border-none font-bold px-3 py-1 rounded-lg text-[10px] uppercase tracking-wider shadow-sm",
-                      loc.status === 'Available' ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
-                    )}>
-                      {loc.status === 'Available' ? 'Sẵn sàng' : 'Bảo trì'}
-                    </Badge>
-                  </div>
 
-                  <div>
-                    <h4 className="text-xl font-bold text-foreground group-hover:text-primary transition-colors">{loc.name}</h4>
-                    <p className="text-xs text-muted-foreground font-bold uppercase tracking-wider mt-1">{loc.code} • {loc.floor}</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
-                      <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Ruler className="h-3 w-3"/> Diện tích</p>
-                      <span className="text-sm font-bold text-foreground">{loc.area} m²</span>
+                    <div>
+                      <h4 className="text-xl font-bold text-foreground group-hover:text-primary transition-colors">{facility.name}</h4>
+                      {facility.location && (
+                        <p className="text-xs text-muted-foreground font-bold uppercase tracking-wider mt-1">{facility.location}</p>
+                      )}
                     </div>
-                    <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
-                      <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Users className="h-3 w-3"/> Sức chứa</p>
-                      <span className="text-sm font-bold text-foreground">{loc.capacity} người</span>
+
+                    {/* Hiển thị thông tin cho Địa điểm */}
+                    {activeTab === 'locations' && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {facility.area && (
+                          <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Ruler className="h-3 w-3"/> Diện tích</p>
+                            <span className="text-sm font-bold text-foreground">{facility.area} m²</span>
+                          </div>
+                        )}
+                        {facility.capacity && (
+                          <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Users className="h-3 w-3"/> Sức chứa</p>
+                            <span className="text-sm font-bold text-foreground">{facility.capacity} người</span>
+                          </div>
+                        )}
+                        {facility.price && (
+                          <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center col-span-2">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><CreditCard className="h-3 w-3"/> Giá thuê</p>
+                            <span className="text-sm font-bold text-foreground">{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(facility.price)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Hiển thị thông tin cho Thiết bị */}
+                    {activeTab === 'equipments' && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {facility.quantity !== undefined && (
+                          <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Package className="h-3 w-3"/> Số lượng</p>
+                            <span className="text-sm font-bold text-foreground">{facility.quantity}</span>
+                          </div>
+                        )}
+                        {facility.asset_value && (
+                          <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><CreditCard className="h-3 w-3"/> Giá trị</p>
+                            <span className="text-sm font-bold text-foreground">{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(facility.asset_value)}</span>
+                          </div>
+                        )}
+                        {facility.price && (
+                          <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center col-span-2">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><CreditCard className="h-3 w-3"/> Giá thuê</p>
+                            <span className="text-sm font-bold text-foreground">{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(facility.price)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {facility.description && (
+                      <div className="text-xs text-muted-foreground bg-accent p-2 rounded-lg border border-accent">
+                        <p className="line-clamp-2">{facility.description}</p>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 pt-2 border-t border-border">
+                      <Button variant="outline" size="sm" onClick={() => handleOpenEdit(facility)} className="flex-1 rounded-xl border-border text-muted-foreground hover:text-primary hover:border-primary/30 hover:bg-primary/5 h-10 font-bold text-xs">
+                        <Edit3 className="h-3.5 w-3.5 mr-2" /> Chỉnh sửa
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => confirmDelete(facility.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-accent p-2 rounded-lg border border-accent">
-                    <UserCircle className="h-4 w-4 text-primary" />
-                    Quản lý: <span className="font-semibold text-foreground">{loc.manager}</span>
-                  </div>
-
-                  <div className="flex gap-2 pt-2 border-t border-border">
-                    <Button variant="outline" size="sm" onClick={() => handleOpenEdit(loc, 'location')} className="flex-1 rounded-xl border-border text-muted-foreground hover:text-primary hover:border-primary/30 hover:bg-primary/5 h-10 font-bold text-xs">
-                      <Edit3 className="h-3.5 w-3.5 mr-2" /> Chỉnh sửa
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => confirmDelete(loc.id, 'location')}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         {/* TAB 2: EQUIPMENTS */}
         <TabsContent value="equipments" className="mt-0">
-          <Card className="border-border shadow-card rounded-3xl overflow-hidden bg-card">
-            <Table>
-              <TableHeader className="bg-muted/50 border-b border-border">
-                <TableRow className="h-14 hover:bg-transparent">
-                  <TableHead className="pl-8 w-[30%] font-bold text-muted-foreground uppercase text-[11px] tracking-widest">Thiết bị</TableHead>
-                  <TableHead className="font-bold text-muted-foreground uppercase text-[11px] tracking-widest">Vị trí đặt</TableHead>
-                  <TableHead className="text-center font-bold text-muted-foreground uppercase text-[11px] tracking-widest">Tổng / Hỏng</TableHead>
-                  <TableHead className="font-bold text-muted-foreground uppercase text-[11px] tracking-widest w-[20%]">Tình trạng</TableHead>
-                  <TableHead className="text-right pr-8 font-bold text-muted-foreground uppercase text-[11px] tracking-widest">Thao tác</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {equipments.filter(e => e.name.toLowerCase().includes(searchTerm.toLowerCase())).map((asset) => {
-                  const healthPercent = asset.total > 0 
-                    ? ((asset.total - asset.broken) / asset.total) * 100 
-                    : 0;
-                  
-                  return (
-                    <TableRow key={asset.id} className="h-20 hover:bg-accent/50 transition-colors border-b last:border-none border-border group">
-                      <TableCell className="pl-8">
-                        <div className="flex items-center gap-4">
-                          <div className="h-10 w-10 rounded-xl bg-secondary/10 flex items-center justify-center text-secondary shadow-sm border border-secondary/20">
-                            <Package className="h-5 w-5" />
-                          </div>
-                          <div>
-                            <p className="font-bold text-foreground text-sm">{asset.name}</p>
-                            <div className="flex gap-2 mt-1">
-                                <Badge variant="outline" className="text-[9px] font-bold border-border text-muted-foreground">{asset.code}</Badge>
-                                <Badge variant="secondary" className="text-[9px] bg-muted text-muted-foreground uppercase">{asset.category}</Badge>
-                            </div>
-                          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground mr-2" />
+              <span className="text-sm text-muted-foreground">Đang tải danh sách thiết bị...</span>
+            </div>
+          ) : facilities.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground bg-muted/10 rounded-xl border border-dashed">
+              <Package className="w-12 h-12 mb-3 opacity-20" />
+              <p className="text-sm">Chưa có thiết bị nào</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {facilities.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase())).map((facility) => (
+                <Card key={facility.id} className="group border-border shadow-card rounded-3xl overflow-hidden hover:shadow-soft transition-all border-t-4 border-t-secondary bg-card flex flex-col justify-between">
+                  <CardContent className="p-7 space-y-5">
+                    <div className="flex justify-between items-start">
+                      <div className="h-12 w-12 rounded-2xl bg-secondary/10 flex items-center justify-center text-secondary shadow-inner">
+                        <Package className="h-6 w-6" />
+                      </div>
+                      {/* Badge trạng thái */}
+                      <Badge className={cn(
+                        "border-none font-bold px-3 py-1 rounded-lg text-[10px] uppercase tracking-wider shadow-sm",
+                        facility.status === 'Available' 
+                          ? "bg-success/10 text-success" 
+                          : "bg-warning/10 text-warning"
+                      )}>
+                        {facility.status === 'Available' ? 'Sẵn sàng' : 'Bảo trì'}
+                      </Badge>
+                    </div>
+
+                    <div>
+                      <h4 className="text-xl font-bold text-foreground group-hover:text-secondary transition-colors">{facility.name}</h4>
+                      {facility.description && (
+                        <p className="text-xs text-muted-foreground font-bold uppercase tracking-wider mt-1 line-clamp-1">{facility.description}</p>
+                      )}
+                    </div>
+
+                    {/* Hiển thị thông tin cho Thiết bị */}
+                    <div className="grid grid-cols-2 gap-3">
+                      {facility.quantity !== undefined && (
+                        <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Package className="h-3 w-3"/> Số lượng</p>
+                          <span className="text-sm font-bold text-foreground">{facility.quantity}</span>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5 text-muted-foreground font-medium text-sm">
-                            <MapPin className="h-3.5 w-3.5 text-primary" /> {asset.location}
+                      )}
+                      {facility.asset_value && (
+                        <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><CreditCard className="h-3 w-3"/> Giá trị</p>
+                          <span className="text-sm font-bold text-foreground">{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(facility.asset_value)}</span>
                         </div>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span className="font-bold text-foreground text-base">{asset.total}</span>
-                        {asset.broken > 0 && <span className="text-destructive text-[10px] font-bold bg-destructive/10 px-1.5 rounded-md mt-0.5 ml-1">-{asset.broken}</span>}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1.5 w-32">
-                          <div className="flex justify-between text-[10px] font-bold text-muted-foreground uppercase">
-                            <span>Độ bền</span>
-                            <span className={cn(healthPercent > 80 ? "text-success" : "text-warning")}>{healthPercent.toFixed(0)}%</span>
-                          </div>
-                          <Progress value={healthPercent} className={cn("h-1.5 rounded-full bg-muted", healthPercent > 80 ? "[&>div]:bg-success" : "[&>div]:bg-warning")} />
+                      )}
+                      {facility.price && (
+                        <div className="bg-muted/50 p-3 rounded-xl border border-border/50 flex flex-col justify-center col-span-2">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1 flex items-center gap-1"><CreditCard className="h-3 w-3"/> Giá thuê</p>
+                          <span className="text-sm font-bold text-foreground">{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(facility.price)}</span>
                         </div>
-                      </TableCell>
-                      <TableCell className="text-right pr-8">
-                        <div className="flex justify-end gap-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(asset, 'equipment')} className="h-9 text-primary hover:bg-primary/10 font-bold px-3 rounded-lg border border-transparent hover:border-primary/20">
-                            <Edit3 className="h-4 w-4 mr-1.5" /> Sửa
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg" onClick={() => confirmDelete(asset.id, 'equipment')}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </Card>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2 pt-2 border-t border-border">
+                      <Button variant="outline" size="sm" onClick={() => handleOpenEdit(facility)} className="flex-1 rounded-xl border-border text-muted-foreground hover:text-secondary hover:border-secondary/30 hover:bg-secondary/5 h-10 font-bold text-xs">
+                        <Edit3 className="h-3.5 w-3.5 mr-2" /> Chỉnh sửa
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-10 w-10 rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" onClick={() => confirmDelete(facility.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -348,75 +548,94 @@ const AssetsPage = () => {
             <div className="grid grid-cols-2 gap-6">
                 <div className="col-span-2">
                     <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Tên gọi (Bắt buộc)</Label>
-                    <Input placeholder="Nhập tên..." value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border focus:ring-2 focus:ring-primary/50" />
+                    <Input placeholder="Nhập tên..." value={formData.name || ''} onChange={(e) => setFormData({...formData, name: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border focus:ring-2 focus:ring-primary/50" />
                 </div>
                 
-                <div className="col-span-1">
-                    <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Mã quản lý</Label>
-                    <Input placeholder="VD: HT-01" value={formData.code} onChange={(e) => setFormData({...formData, code: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                <div className="col-span-2">
+                    <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Mô tả</Label>
+                    <Textarea placeholder="Nhập mô tả..." value={formData.description || ''} onChange={(e) => setFormData({...formData, description: e.target.value})} className="mt-1.5 rounded-xl border-border" rows={3} />
                 </div>
 
-                {modalType === 'location' ? (
-                    <>
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Loại hình</Label>
-                            <Select value={formData.type} onValueChange={(val) => setFormData({...formData, type: val})}>
-                                <SelectTrigger className="h-11 mt-1.5 rounded-xl border-border"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Indoor">Trong nhà</SelectItem>
-                                    <SelectItem value="Outdoor">Ngoài trời</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        {/* ... Các trường khác giữ nguyên cấu trúc ... */}
-                        {/* Tôi đã rút gọn phần này để code ngắn hơn, logic giống hệt bên trên nhưng dùng class màu từ biến CSS */}
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Diện tích (m²)</Label>
-                            <Input type="number" value={formData.area} onChange={(e) => setFormData({...formData, area: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
-                        </div>
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Sức chứa (Người)</Label>
-                            <Input type="number" value={formData.capacity} onChange={(e) => setFormData({...formData, capacity: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
-                        </div>
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Tầng / Vị trí</Label>
-                            <Input placeholder="VD: Tầng 1" value={formData.floor} onChange={(e) => setFormData({...formData, floor: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
-                        </div>
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Trạng thái</Label>
-                            <Select value={formData.status} onValueChange={(val) => setFormData({...formData, status: val})}>
-                                <SelectTrigger className="h-11 mt-1.5 rounded-xl border-border"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Available">Sẵn sàng</SelectItem>
-                                    <SelectItem value="Maintenance">Đang bảo trì</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="col-span-2">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Người quản lý</Label>
-                            <Input placeholder="Tên người phụ trách..." value={formData.manager} onChange={(e) => setFormData({...formData, manager: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
-                        </div>
-                    </>
-                ) : (
-                    <>
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Danh mục</Label>
-                            <Input placeholder="VD: Âm thanh" value={formData.category} onChange={(e) => setFormData({...formData, category: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
-                        </div>
-                        <div className="col-span-2">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Vị trí đặt / Kho</Label>
-                            <Input placeholder="VD: Hội trường chính..." value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
-                        </div>
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Tổng lượng</Label>
-                            <Input type="number" value={formData.total} onChange={(e) => setFormData({...formData, total: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
-                        </div>
-                        <div className="col-span-1">
-                            <Label className="text-[11px] font-bold text-destructive uppercase tracking-widest">Số lượng hỏng</Label>
-                            <Input type="number" value={formData.broken} onChange={(e) => setFormData({...formData, broken: e.target.value})} className="h-11 mt-1.5 rounded-xl border-destructive/30 text-destructive font-bold bg-destructive/5" />
-                        </div>
-                    </>
+                {/* Form cho Địa điểm */}
+                {modalType === 'location' && (
+                  <>
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Sức chứa (Người)</Label>
+                        <Input type="number" placeholder="VD: 200" value={formData.capacity || ''} onChange={(e) => setFormData({...formData, capacity: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                    </div>
+                    
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Diện tích (m²)</Label>
+                        <Input type="number" placeholder="VD: 150" value={formData.area || ''} onChange={(e) => setFormData({...formData, area: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                    </div>
+                    
+                    <div className="col-span-2">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Vị trí</Label>
+                        <Input placeholder="VD: Tầng 1, Hội trường chính" value={formData.location || ''} onChange={(e) => setFormData({...formData, location: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                    </div>
+                    
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Loại địa điểm</Label>
+                        <Select value={formData.type || 'PhongHop'} onValueChange={(val) => setFormData({...formData, type: val})}>
+                            <SelectTrigger className="h-11 mt-1.5 rounded-xl border-border"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="PhongHop">Phòng họp</SelectItem>
+                                <SelectItem value="TheThao">Thể thao</SelectItem>
+                                <SelectItem value="SanBai">Sân bãi</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Giá thuê (VNĐ)</Label>
+                        <Input type="number" placeholder="VD: 500000" value={formData.price || ''} onChange={(e) => setFormData({...formData, price: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                    </div>
+                  </>
                 )}
+
+                {/* Form cho Thiết bị */}
+                {modalType === 'equipment' && (
+                  <>
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Số lượng</Label>
+                        <Input type="number" placeholder="VD: 10" value={formData.quantity || ''} onChange={(e) => setFormData({...formData, quantity: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                    </div>
+                    
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Giá trị tài sản (VNĐ)</Label>
+                        <Input type="number" placeholder="VD: 5000000" value={formData.asset_value || ''} onChange={(e) => setFormData({...formData, asset_value: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                    </div>
+                    
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Loại thiết bị</Label>
+                        <Select value={formData.type || 'ThietBi'} onValueChange={(val) => setFormData({...formData, type: val})}>
+                            <SelectTrigger className="h-11 mt-1.5 rounded-xl border-border"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="ThietBi">Thiết bị</SelectItem>
+                                <SelectItem value="AmThanh">Âm thanh</SelectItem>
+                                <SelectItem value="DungCu">Dụng cụ</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    
+                    <div className="col-span-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Giá thuê (VNĐ)</Label>
+                        <Input type="number" placeholder="VD: 200000" value={formData.price || ''} onChange={(e) => setFormData({...formData, price: e.target.value})} className="h-11 mt-1.5 rounded-xl border-border" />
+                    </div>
+                  </>
+                )}
+                
+                <div className="col-span-2">
+                    <Label className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Trạng thái</Label>
+                    <Select value={formData.status || 'Available'} onValueChange={(val) => setFormData({...formData, status: val})}>
+                        <SelectTrigger className="h-11 mt-1.5 rounded-xl border-border"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="Available">Sẵn sàng</SelectItem>
+                            <SelectItem value="Maintenance">Đang bảo trì</SelectItem>
+                            <SelectItem value="Unavailable">Không khả dụng</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
             </div>
           </div>
 

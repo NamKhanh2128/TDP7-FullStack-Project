@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Megaphone, Plus, Search, Calendar, Clock, MapPin, 
-  Trash2, Edit3, Eye, AlertCircle, CheckCircle2, AlertTriangle 
+  Trash2, Edit3, Eye, AlertCircle, CheckCircle2, AlertTriangle, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,18 +19,32 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { newsItems as initialNewsItems, NewsItem } from '@/data/mockData';
+import { getNotificationsAPI, createNotificationAPI, deleteNotificationAPI } from '@/services/apiService';
+
+// Interface cho dữ liệu từ API
+interface Notification {
+  id: string;
+  title: string;
+  type: string;
+  content: string;
+  location?: string;
+  event_date?: string;
+  is_urgent?: boolean;
+  created_at?: string;
+}
 
 const AdminNewsPage = () => {
   const { toast } = useToast();
   
   // States
-  const [listNews, setListNews] = useState<NewsItem[]>(initialNewsItems);
+  const [listNews, setListNews] = useState<Notification[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
+  const [selectedNews, setSelectedNews] = useState<Notification | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -45,11 +59,38 @@ const AdminNewsPage = () => {
     isImportant: false
   });
 
+  // Fetch dữ liệu thông báo từ API
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      setIsLoading(true);
+      try {
+        const response = await getNotificationsAPI();
+        if (response.success && response.data) {
+          setListNews(response.data);
+        } else {
+          setListNews([]);
+        }
+      } catch (error: any) {
+        console.error('Error fetching notifications:', error);
+        toast({
+          title: 'Lỗi',
+          description: error.message || 'Không thể tải danh sách thông báo',
+          variant: 'destructive',
+        });
+        setListNews([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchNotifications();
+  }, []);
+
   // 1. Logic Tìm kiếm (Search)
   const filteredNews = useMemo(() => {
     return listNews.filter(news => 
       news.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      news.summary.toLowerCase().includes(searchTerm.toLowerCase())
+      (news.content && news.content.toLowerCase().includes(searchTerm.toLowerCase()))
     );
   }, [searchTerm, listNews]);
 
@@ -64,50 +105,162 @@ const AdminNewsPage = () => {
   };
 
   // 2. Xử lý Mở Modal Sửa (Edit)
-  const handleEditClick = (news: NewsItem) => {
+  const handleEditClick = (news: Notification) => {
     setSelectedNews(news);
     setIsEditing(true);
-    // Ở đây bạn map dữ liệu từ news vào formData
+    // Map dữ liệu từ news vào formData
+    const eventDate = news.event_date ? new Date(news.event_date).toISOString().split('T')[0] : '';
     setFormData({
-      title: news.title,
-      type: news.type as any,
-      summary: news.summary,
+      title: news.title || '',
+      type: news.type || 'meeting',
+      summary: '', // API không có summary, có thể dùng content
       content: news.content || '',
-      eventDate: news.date || '', // Giả định date trong mock khớp với field
-      startTime: '', // Bổ sung nếu mockData có
+      eventDate: eventDate,
+      startTime: '', // API không có startTime/endTime riêng
       endTime: '',
-      location: 'Nhà văn hóa',
-      isImportant: news.isImportant || false
+      location: news.location || '',
+      isImportant: news.is_urgent || false
     });
     setIsModalOpen(true);
   };
 
   // 3. Xử lý Mở Modal Xóa (Delete)
-  const handleDeleteClick = (news: NewsItem) => {
+  const handleDeleteClick = (news: Notification) => {
     setSelectedNews(news);
     setIsDeleteDialogOpen(true);
   };
 
-  const confirmDelete = () => {
-    if (selectedNews) {
-      setListNews(prev => prev.filter(n => n.id !== selectedNews.id));
+  const confirmDelete = async () => {
+    if (!selectedNews) return;
+
+    try {
+      const response = await deleteNotificationAPI(selectedNews.id);
+      if (response.success) {
+        // Reload danh sách sau khi xóa
+        const fetchResponse = await getNotificationsAPI();
+        if (fetchResponse.success && fetchResponse.data) {
+          setListNews(fetchResponse.data);
+        }
+        
+        toast({
+          title: "Đã xóa",
+          description: `Thông báo "${selectedNews.title}" đã được gỡ bỏ.`,
+          variant: "destructive"
+        });
+      } else {
+        throw new Error(response.message || 'Không thể xóa thông báo');
+      }
+    } catch (error: any) {
+      console.error('Error deleting notification:', error);
       toast({
-        title: "Đã xóa",
-        description: `Thông báo "${selectedNews.title}" đã được gỡ bỏ.`,
-        variant: "destructive"
+        title: 'Lỗi',
+        description: error.message || 'Không thể xóa thông báo. Vui lòng thử lại.',
+        variant: 'destructive',
       });
+    } finally {
+      setIsDeleteDialogOpen(false);
     }
-    setIsDeleteDialogOpen(false);
   };
 
-  const handlePublish = () => {
-    if (isEditing) {
-      toast({ title: "Cập nhật thành công", description: "Thông báo đã được thay đổi nội dung." });
-    } else {
-      toast({ title: "Phát hành thành công", description: "Thông báo đã được gửi đến toàn bộ cư dân." });
+  const handlePublish = async () => {
+    // Validation
+    if (!formData.title || !formData.content) {
+      toast({
+        title: 'Lỗi',
+        description: 'Vui lòng điền đầy đủ tiêu đề và nội dung',
+        variant: 'destructive',
+      });
+      return;
     }
-    setIsModalOpen(false);
-    resetForm();
+
+    setIsSubmitting(true);
+    try {
+      // Tạo event_date từ eventDate và startTime
+      // Lấy giá trị từ ô "Ngày diễn ra" và "Giờ bắt đầu"
+      let event_date = null;
+      if (formData.eventDate) {
+        if (formData.startTime) {
+          // Gộp date và startTime thành một chuỗi Date đầy đủ
+          // Tạo Date object từ local time (sẽ tự động xử lý múi giờ)
+          const combinedDate = new Date(`${formData.eventDate}T${formData.startTime}`);
+          
+          // Kiểm tra nếu Date hợp lệ
+          if (!isNaN(combinedDate.getTime())) {
+            // Chuyển sang ISO string để gửi lên API (sẽ tự động chuyển sang UTC)
+            event_date = combinedDate.toISOString();
+          } else {
+            // Fallback: nếu Date không hợp lệ, dùng cách cũ
+            event_date = `${formData.eventDate}T${formData.startTime}:00`;
+          }
+        } else {
+          // Nếu không có giờ, mặc định là 00:00:00 (nửa đêm)
+          const combinedDate = new Date(`${formData.eventDate}T00:00:00`);
+          if (!isNaN(combinedDate.getTime())) {
+            event_date = combinedDate.toISOString();
+          } else {
+            event_date = `${formData.eventDate}T00:00:00`;
+          }
+        }
+      }
+
+      // Tạo end_date từ eventDate và endTime
+      // Lấy giá trị từ ô "Ngày diễn ra" và "Giờ kết thúc"
+      let end_date = null;
+      if (formData.eventDate && formData.endTime) {
+        // Gộp date và endTime thành một chuỗi Date đầy đủ
+        // Tạo Date object từ local time (sẽ tự động xử lý múi giờ)
+        const combinedEndDate = new Date(`${formData.eventDate}T${formData.endTime}`);
+        
+        // Kiểm tra nếu Date hợp lệ
+        if (!isNaN(combinedEndDate.getTime())) {
+          // Chuyển sang ISO string để gửi lên API (sẽ tự động chuyển sang UTC)
+          end_date = combinedEndDate.toISOString();
+        } else {
+          // Fallback: nếu Date không hợp lệ, dùng cách cũ
+          end_date = `${formData.eventDate}T${formData.endTime}:00`;
+        }
+      }
+
+      // Tạo payload gửi lên API
+      const payload = {
+        title: formData.title,
+        type: formData.type,
+        content: formData.content,
+        location: formData.location || null,
+        event_date: event_date || null,
+        end_date: end_date || null,
+        is_urgent: formData.isImportant || false
+      };
+
+      const response = await createNotificationAPI(payload);
+      
+      if (response.success) {
+        toast({ 
+          title: "Phát hành thành công", 
+          description: "Thông báo đã được gửi đến toàn bộ cư dân." 
+        });
+        
+        // Reload danh sách sau khi tạo
+        const fetchResponse = await getNotificationsAPI();
+        if (fetchResponse.success && fetchResponse.data) {
+          setListNews(fetchResponse.data);
+        }
+        
+        setIsModalOpen(false);
+        resetForm();
+      } else {
+        throw new Error(response.message || 'Không thể tạo thông báo');
+      }
+    } catch (error: any) {
+      console.error('Error creating notification:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể tạo thông báo. Vui lòng thử lại.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -151,8 +304,14 @@ const AdminNewsPage = () => {
 
       {/* News List */}
       <div className="grid gap-4">
-        <AnimatePresence mode='popLayout'>
-          {filteredNews.map((news) => (
+        {isLoading ? (
+          <div className="flex items-center justify-center p-12">
+            <Loader2 className="h-6 w-6 animate-spin text-primary mr-2" />
+            <span className="text-muted-foreground">Đang tải danh sách thông báo...</span>
+          </div>
+        ) : (
+          <AnimatePresence mode='popLayout'>
+            {filteredNews.map((news) => (
             <motion.div
               key={news.id}
               layout
@@ -173,12 +332,27 @@ const AdminNewsPage = () => {
                       <div>
                         <div className="flex items-center gap-2 mb-1">
                           <h3 className="font-bold text-slate-800">{news.title}</h3>
-                          {news.isImportant && <Badge variant="destructive">Khẩn</Badge>}
+                          {news.is_urgent && <Badge variant="destructive">Khẩn</Badge>}
                         </div>
-                        <p className="text-sm text-slate-500 line-clamp-1">{news.summary}</p>
+                        <p className="text-sm text-slate-500 line-clamp-1">{news.content || ''}</p>
                         <div className="flex flex-wrap gap-4 mt-2 text-xs text-slate-400">
-                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {news.date}</span>
-                          <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> Nhà văn hóa</span>
+                          {news.event_date && (
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> 
+                              {new Date(news.event_date).toLocaleDateString('vi-VN')}
+                            </span>
+                          )}
+                          {news.location && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3" /> {news.location}
+                            </span>
+                          )}
+                          {news.created_at && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> 
+                              {new Date(news.created_at).toLocaleDateString('vi-VN')}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -200,12 +374,17 @@ const AdminNewsPage = () => {
               </Card>
             </motion.div>
           ))}
-        </AnimatePresence>
+          </AnimatePresence>
+        )}
         
-        {filteredNews.length === 0 && (
+        {!isLoading && filteredNews.length === 0 && (
           <div className="text-center py-20 bg-slate-50 rounded-xl border-2 border-dashed">
             <Search className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-            <p className="text-slate-500">Không tìm thấy thông báo nào khớp với từ khóa "{searchTerm}"</p>
+            <p className="text-slate-500">
+              {searchTerm 
+                ? `Không tìm thấy thông báo nào khớp với từ khóa "${searchTerm}"`
+                : 'Chưa có thông báo nào'}
+            </p>
           </div>
         )}
       </div>
@@ -302,9 +481,27 @@ const AdminNewsPage = () => {
           </div>
 
           <DialogFooter className="border-t pt-4">
-            <Button variant="outline" onClick={() => { setIsModalOpen(false); resetForm(); }}>Hủy bỏ</Button>
-            <Button onClick={handlePublish} className="bg-blue-600 hover:bg-blue-700">
-              <CheckCircle2 className="mr-2 h-4 w-4" /> {isEditing ? "Lưu thay đổi" : "Phát hành ngay"}
+            <Button 
+              variant="outline" 
+              onClick={() => { setIsModalOpen(false); resetForm(); }}
+              disabled={isSubmitting}
+            >
+              Hủy bỏ
+            </Button>
+            <Button 
+              onClick={handlePublish} 
+              className="bg-blue-600 hover:bg-blue-700"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Đang xử lý...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="mr-2 h-4 w-4" /> {isEditing ? "Lưu thay đổi" : "Phát hành ngay"}
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

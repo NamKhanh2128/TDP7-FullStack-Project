@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Building2, Loader2, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle } from 'lucide-react';
+import { Building2, Loader2, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle, AlertCircle } from 'lucide-react';
+import { registerAPI } from '@/services/apiService';
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState({
@@ -17,8 +17,9 @@ export default function RegisterPage() {
     confirmPassword: '',
   });
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
-  const { register, isLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -27,53 +28,64 @@ export default function RegisterPage() {
       ...prev,
       [e.target.name]: e.target.value,
     }));
+    // Xóa thông báo lỗi khi user bắt đầu nhập lại
+    if (errorMessage) {
+      setErrorMessage('');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(''); // Reset error message
     
+    // Validation
     if (!formData.full_name || !formData.email || !formData.phone || !formData.password) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi',
-        description: 'Vui lòng nhập đầy đủ thông tin',
-      });
+      setErrorMessage('Vui lòng nhập đầy đủ thông tin');
       return;
     }
 
     if (formData.password !== formData.confirmPassword) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi',
-        description: 'Mật khẩu xác nhận không khớp',
-      });
+      setErrorMessage('Mật khẩu xác nhận không khớp');
       return;
     }
 
     if (formData.password.length < 6) {
-      toast({
-        variant: 'destructive',
-        title: 'Lỗi',
-        description: 'Mật khẩu phải có ít nhất 6 ký tự',
-      });
+      setErrorMessage('Mật khẩu phải có ít nhất 6 ký tự');
       return;
     }
 
-    const result = await register({
-      full_name: formData.full_name,
-      email: formData.email,
-      phone: formData.phone,
-      password: formData.password,
-    });
-    
-    if (result.success) {
-      setIsSuccess(true);
-    } else {
+    setLoading(true);
+
+    try {
+      // Gọi API đăng ký
+      const response = await registerAPI({
+        full_name: formData.full_name,
+        email: formData.email,
+        phone: formData.phone,
+        password: formData.password,
+      });
+      
+      if (response.success) {
+        setIsSuccess(true);
+        toast({
+          title: 'Đăng ký thành công',
+          description: 'Tài khoản của bạn đang chờ phê duyệt từ quản trị viên.',
+        });
+      } else {
+        setErrorMessage(response.message || 'Đăng ký thất bại. Vui lòng thử lại.');
+      }
+    } catch (error: any) {
+      console.error('Register error:', error);
+      const errorMsg = error.message || error.error || 'Đăng ký thất bại. Vui lòng thử lại.';
+      setErrorMessage(errorMsg);
+      
       toast({
         variant: 'destructive',
         title: 'Đăng ký thất bại',
-        description: result.error,
+        description: errorMsg,
       });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -114,6 +126,14 @@ export default function RegisterPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Error Message */}
+            {errorMessage && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="full_name">Họ và tên</Label>
               <div className="relative">
@@ -202,9 +222,9 @@ export default function RegisterPage() {
             <Button
               type="submit"
               className="w-full gradient-primary-bg hover:opacity-90 transition-opacity"
-              disabled={isLoading}
+              disabled={loading}
             >
-              {isLoading ? (
+              {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Đang xử lý...

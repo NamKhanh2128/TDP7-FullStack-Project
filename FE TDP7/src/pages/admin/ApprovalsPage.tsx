@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Check, X, Eye, Clock, UserPlus, Calendar, UserMinus, 
-  KeyRound, UserCheck, MapPin, Shield, Smartphone, Mail, FileText 
+  UserCheck, MapPin, Shield, Smartphone, Mail, FileText, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +18,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
+import { getPendingUsersAPI, approveUserAPI, getAllRequestsAPI, updateRequestStatusAPI } from '@/services/apiService';
 
 // --- MOCK DATA ---
 const pendingRequests = [
@@ -65,106 +66,463 @@ const pendingRequests = [
   }
 ];
 
-const accountRequests = [
-  {
-    id: 'acc-001',
-    name: 'Trần Văn Hùng',
-    phone: '0987654321',
-    email: 'tranvanhung@email.com',
-    submittedAt: '23/12/2024 10:30',
-    status: 'pending',
-    householdCode: 'TDP7-2024-002',
-    idCard: '001098000123',
-    address: 'P.1205 - Tòa A2 - Chung cư Blue Star',
-    role: 'Chủ hộ',
-    avatar: null,
-  },
-  {
-    id: 'acc-002',
-    name: 'Lê Thị Hoa',
-    phone: '0912345678',
-    email: 'lethihoa@email.com',
-    submittedAt: '22/12/2024 14:15',
-    status: 'pending',
-    householdCode: 'TDP7-2024-003',
-    idCard: '001099000456',
-    address: 'Số 15, Ngõ 3, Đường Thanh Niên',
-    role: 'Thành viên',
-    avatar: null,
-  },
-];
-
-const passwordRequests = [
-  {
-    id: 'pwd-001',
-    name: 'Nguyễn Văn An',
-    phone: '0901234567',
-    email: 'nguyenvanan@gmail.com',
-    submittedAt: '24/12/2024 08:00',
-    reason: 'Quên mật khẩu cũ, không truy cập được email khôi phục',
-    householdCode: 'TDP7-2024-001',
-    lastLogin: '20/11/2024 15:30',
-    status: 'Đang hoạt động',
-  },
-];
+// accountRequests sẽ được load từ API, không cần mock data nữa
 
 const typeLabels: Record<string, string> = {
   tam_vang: 'Tạm vắng',
+  TamVang: 'Tạm vắng',
   tam_tru: 'Tạm trú',
+  TamTru: 'Tạm trú',
   dat_lich: 'Đặt lịch',
+  DatLich: 'Đặt lịch',
   bien_dong: 'Biến động',
+  BienDong: 'Biến động',
 };
 
 const typeIcons: Record<string, React.ElementType> = {
   tam_vang: UserMinus,
+  TamVang: UserMinus,
   tam_tru: UserPlus,
+  TamTru: UserPlus,
   dat_lich: Calendar,
+  DatLich: Calendar,
   bien_dong: Clock,
+  BienDong: Clock,
 };
 
 const ApprovalsPage = () => {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('requests');
   const [requestFilter, setRequestFilter] = useState('all');
+  const [viewStatus, setViewStatus] = useState<'Pending' | 'History'>('Pending');
   
   // States cho các dialog chi tiết
-  const [selectedRequest, setSelectedRequest] = useState<typeof pendingRequests[0] | null>(null);
-  const [selectedAccount, setSelectedAccount] = useState<typeof accountRequests[0] | null>(null);
-  const [selectedPassword, setSelectedPassword] = useState<typeof passwordRequests[0] | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<any | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<any | null>(null);
   
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
-  const filteredRequests = pendingRequests.filter((r) => {
+  // States cho dữ liệu từ API
+  const [accountRequests, setAccountRequests] = useState<any[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [approvingUserId, setApprovingUserId] = useState<string | null>(null);
+  
+  // States cho requests
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
+  const [updatingRequestId, setUpdatingRequestId] = useState<string | null>(null);
+
+  // Fetch danh sách user chờ duyệt từ API
+  const fetchPendingUsers = async () => {
+    setLoadingAccounts(true);
+    try {
+      const response = await getPendingUsersAPI();
+      if (response.success && response.data) {
+        // Format dữ liệu từ API để phù hợp với cấu trúc hiện tại
+        const formattedUsers = response.data.map((user: any) => ({
+          id: user.id,
+          name: user.full_name,
+          phone: user.phone || 'Chưa cập nhật',
+          email: user.email,
+          submittedAt: new Date(user.created_at).toLocaleString('vi-VN', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          }),
+          status: user.status,
+          householdCode: user.id, // Tạm thời dùng ID, có thể thay bằng householdCode nếu có
+          idCard: 'Chưa cập nhật', // Có thể thêm vào API sau
+          address: 'Chưa cập nhật', // Có thể thêm vào API sau
+          role: user.role === 'admin' ? 'Quản trị viên' : 'Cư dân',
+          avatar: user.avatar || null,
+        }));
+        setAccountRequests(formattedUsers);
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi lấy danh sách user chờ duyệt:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể tải danh sách user chờ duyệt',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
+  // Fetch danh sách requests từ API
+  const fetchRequests = async () => {
+    setLoadingRequests(true);
+    try {
+      const response = await getAllRequestsAPI();
+      if (response.success && response.data) {
+        setRequests(response.data);
+      } else {
+        setRequests([]);
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi lấy danh sách yêu cầu:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể tải danh sách yêu cầu',
+        variant: 'destructive',
+      });
+      setRequests([]);
+    } finally {
+      setLoadingRequests(false);
+    }
+  };
+
+  // Load dữ liệu khi component mount
+  useEffect(() => {
+    fetchPendingUsers();
+    fetchRequests();
+  }, []);
+
+  // Đếm số lượng pending requests (cho Badge)
+  const pendingRequestsCount = requests.filter((r) => {
+    const status = r.status?.toLowerCase();
+    return status === 'pending';
+  }).length;
+
+  const filteredRequests = requests.filter((r) => {
+    // Lọc theo viewStatus
+    if (viewStatus === 'Pending') {
+      // Chỉ lấy các request có status = 'Pending' hoặc 'pending'
+      if (r.status && r.status.toLowerCase() !== 'pending') return false;
+    } else if (viewStatus === 'History') {
+      // Chỉ lấy các request đã được xử lý (Approved hoặc Rejected)
+      const status = r.status?.toLowerCase();
+      if (status !== 'approved' && status !== 'rejected') return false;
+    }
+    
+    // Lọc theo loại yêu cầu
     if (requestFilter === 'all') return true;
     return r.type === requestFilter;
   });
 
   // --- Handlers ---
-  const handleApprove = () => {
-    toast({ title: 'Đã duyệt', description: `Yêu cầu của ${selectedRequest?.applicantName} đã được phê duyệt.` });
-    setSelectedRequest(null);
+  const handleApprove = async () => {
+    if (!selectedRequest) return;
+
+    setUpdatingRequestId(selectedRequest.id);
+    try {
+      const response = await updateRequestStatusAPI(selectedRequest.id, 'Approved');
+      if (response.success) {
+        toast({ 
+          title: 'Đã duyệt', 
+          description: `Yêu cầu của ${selectedRequest?.full_name || selectedRequest?.applicant_name} đã được phê duyệt.` 
+        });
+        setSelectedRequest(null);
+        // Reload danh sách
+        await fetchRequests();
+      } else {
+        throw new Error(response.message || 'Không thể duyệt yêu cầu');
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi duyệt yêu cầu:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể duyệt yêu cầu. Vui lòng thử lại.',
+        variant: 'destructive',
+      });
+    } finally {
+      setUpdatingRequestId(null);
+    }
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
+    if (!selectedRequest) return;
+    
     if (!rejectReason) {
       toast({ title: 'Lỗi', description: 'Vui lòng nhập lý do từ chối', variant: 'destructive' });
       return;
     }
-    toast({ title: 'Đã từ chối', description: `Yêu cầu của ${selectedRequest?.applicantName} đã bị từ chối.` });
-    setSelectedRequest(null);
-    setShowRejectInput(false);
-    setRejectReason('');
+
+    setUpdatingRequestId(selectedRequest.id);
+    try {
+      const response = await updateRequestStatusAPI(selectedRequest.id, 'Rejected');
+      if (response.success) {
+        toast({ 
+          title: 'Đã từ chối', 
+          description: `Yêu cầu của ${selectedRequest?.full_name || selectedRequest?.applicant_name} đã bị từ chối.` 
+        });
+        setSelectedRequest(null);
+        setShowRejectInput(false);
+        setRejectReason('');
+        // Reload danh sách
+        await fetchRequests();
+      } else {
+        throw new Error(response.message || 'Không thể từ chối yêu cầu');
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi từ chối yêu cầu:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể từ chối yêu cầu. Vui lòng thử lại.',
+        variant: 'destructive',
+      });
+    } finally {
+      setUpdatingRequestId(null);
+    }
   };
 
-  const handleAccountApprove = () => {
-    toast({ title: 'Đã duyệt tài khoản', description: `Tài khoản của ${selectedAccount?.name} đã được kích hoạt.` });
-    setSelectedAccount(null);
+  const handleAccountApprove = async () => {
+    if (!selectedAccount) return;
+
+    setApprovingUserId(selectedAccount.id);
+    try {
+      const response = await approveUserAPI(selectedAccount.id);
+      if (response.success) {
+        toast({ 
+          title: 'Đã duyệt tài khoản', 
+          description: response.message || `Tài khoản của ${selectedAccount?.name} đã được kích hoạt.` 
+        });
+        setSelectedAccount(null);
+        // Reload danh sách để user đó biến mất
+        await fetchPendingUsers();
+      } else {
+        throw new Error(response.message || 'Không thể duyệt tài khoản');
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi duyệt tài khoản:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể duyệt tài khoản',
+        variant: 'destructive',
+      });
+    } finally {
+      setApprovingUserId(null);
+    }
   };
 
-  const handlePasswordApprove = () => {
-    toast({ title: 'Đã duyệt đổi mật khẩu', description: `Yêu cầu đổi mật khẩu của ${selectedPassword?.name} đã được chấp nhận.` });
-    setSelectedPassword(null);
+  // Helper function để render request detail
+  const renderRequestDetail = () => {
+    if (!selectedRequest) return null;
+
+    const displayName = selectedRequest.full_name || selectedRequest.applicant_name || 'Không có tên';
+    const displayHouseholdCode = selectedRequest.household_code || selectedRequest.householdCode || 'Chưa có';
+    const displayType = typeLabels[selectedRequest.type] || selectedRequest.type;
+    
+    // Format thời gian
+    const formatDate = (dateString: string) => {
+      if (!dateString) return 'Chưa có';
+      try {
+        const date = new Date(dateString);
+        return date.toLocaleString('vi-VN', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch {
+        return dateString;
+      }
+    };
+    const displayDate = formatDate(selectedRequest.created_at || '');
+
+    // Parse details từ JSON string hoặc object
+    let detailsObj: any = {};
+    if (selectedRequest.details) {
+      try {
+        if (typeof selectedRequest.details === 'string') {
+          detailsObj = JSON.parse(selectedRequest.details);
+        } else {
+          detailsObj = selectedRequest.details;
+        }
+      } catch {
+        detailsObj = {};
+      }
+    }
+
+    // Map các trường từ details
+    const detailLabels: Record<string, string> = {
+      reason: 'Lý do',
+      start_date: 'Ngày bắt đầu',
+      end_date: 'Ngày kết thúc',
+      ho_ten: 'Họ tên',
+      ngay_sinh: 'Ngày sinh',
+      cccd: 'CCCD',
+      ly_do: 'Lý do',
+      thoi_gian_luu_tru: 'Thời gian lưu trú',
+      permanent_address: 'Địa chỉ thường trú',
+      ngay_di: 'Ngày đi',
+      noi_den: 'Nơi đến',
+      dia_diem: 'Địa điểm',
+      muc_dich: 'Mục đích',
+      thoi_gian: 'Thời gian',
+    };
+
+    return (
+      <div className="space-y-6">
+        {/* Header Info */}
+        <div className="rounded-lg bg-muted/30 p-4 border border-border/50">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-bold text-lg text-primary">{displayName}</h3>
+            <Badge variant="outline" className="px-3 py-1 bg-white">{displayType}</Badge>
+          </div>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <UserCheck className="h-4 w-4" /> {displayHouseholdCode}
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Clock className="h-4 w-4" /> {displayDate}
+            </div>
+          </div>
+        </div>
+
+        {/* Dynamic Details */}
+        <div className="space-y-3">
+          <h4 className="font-medium flex items-center gap-2 text-sm text-muted-foreground">
+            <FileText className="h-4 w-4" /> Nội dung kê khai
+          </h4>
+          <div className="bg-background rounded-lg border border-border p-4 space-y-3">
+            {/* Hiển thị Lý do (reason) */}
+            <div className="space-y-2">
+              <div className="flex items-start gap-2">
+                <span className="text-muted-foreground text-sm font-medium min-w-[80px]">Lý do:</span>
+                <div className="font-medium text-sm flex-1 whitespace-pre-line">
+                  {selectedRequest.reason || (detailsObj.reason ? String(detailsObj.reason) : null) || 'Người dùng không nhập lý do'}
+                </div>
+              </div>
+            </div>
+
+            {/* Hiển thị Thời gian (start_date và end_date) */}
+            {(selectedRequest.start_date || selectedRequest.end_date || detailsObj.start_date || detailsObj.end_date) && (
+              <div className="flex items-start gap-2 pt-2 border-t border-dashed border-border">
+                <span className="text-muted-foreground text-sm font-medium min-w-[80px]">Thời gian:</span>
+                <span className="font-medium text-sm flex-1">
+                  {selectedRequest.start_date || detailsObj.start_date ? (
+                    <>Từ: {formatDate(selectedRequest.start_date || detailsObj.start_date)}</>
+                  ) : null}
+                  {(selectedRequest.start_date || detailsObj.start_date) && (selectedRequest.end_date || detailsObj.end_date) && ' - '}
+                  {selectedRequest.end_date || detailsObj.end_date ? (
+                    <>Đến: {formatDate(selectedRequest.end_date || detailsObj.end_date)}</>
+                  ) : null}
+                </span>
+              </div>
+            )}
+
+            {/* Hiển thị các trường khác từ details (nếu có) */}
+            {Object.keys(detailsObj).length > 0 && Object.keys(detailsObj).some(key => key !== 'reason' && key !== 'start_date' && key !== 'end_date') && (
+              <>
+                {Object.entries(detailsObj)
+                  .filter(([key]) => key !== 'reason' && key !== 'start_date' && key !== 'end_date')
+                  .map(([key, value]) => {
+                    const label = detailLabels[key] || key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ');
+                    const displayValue = value ? String(value) : 'Chưa có';
+                    return (
+                      <div key={key} className="flex justify-between text-sm border-t border-dashed border-border pt-2">
+                        <span className="text-muted-foreground capitalize">{label}</span>
+                        <span className="font-medium text-right">{displayValue}</span>
+                      </div>
+                    );
+                  })}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Actions - Chỉ hiển thị khi request chưa được xử lý (Pending) */}
+        {selectedRequest.status?.toLowerCase() === 'pending' && (
+          <div className="space-y-4 pt-4 border-t">
+            {showRejectInput && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+                <Label className="mb-2 block text-destructive font-semibold">Lý do từ chối (*)</Label>
+                <Textarea 
+                  placeholder="Nhập lý do chi tiết..." 
+                  value={rejectReason} 
+                  onChange={(e) => setRejectReason(e.target.value)} 
+                  className="border-destructive/50 focus-visible:ring-destructive"
+                />
+              </motion.div>
+            )}
+            
+            <div className="flex gap-3">
+              {!showRejectInput ? (
+                <>
+                  <Button 
+                    variant="outline" 
+                    className="flex-1 hover:bg-destructive/10 hover:text-destructive hover:border-destructive" 
+                    onClick={() => setShowRejectInput(true)}
+                    disabled={updatingRequestId === selectedRequest?.id}
+                  >
+                    <X className="h-4 w-4 mr-2" /> Từ chối
+                  </Button>
+                  <Button 
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white" 
+                    onClick={handleApprove}
+                    disabled={updatingRequestId === selectedRequest?.id}
+                  >
+                    {updatingRequestId === selectedRequest?.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Đang xử lý...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="h-4 w-4 mr-2" /> Phê duyệt ngay
+                      </>
+                    )}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button 
+                    variant="ghost" 
+                    onClick={() => setShowRejectInput(false)}
+                    disabled={updatingRequestId === selectedRequest?.id}
+                  >
+                    Hủy
+                  </Button>
+                  <Button 
+                    variant="destructive" 
+                    className="flex-1" 
+                    onClick={handleReject}
+                    disabled={updatingRequestId === selectedRequest?.id || !rejectReason.trim()}
+                  >
+                    {updatingRequestId === selectedRequest?.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Đang xử lý...
+                      </>
+                    ) : (
+                      'Xác nhận từ chối'
+                    )}
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Hiển thị trạng thái đã xử lý khi ở chế độ History */}
+        {selectedRequest.status?.toLowerCase() !== 'pending' && (
+          <div className="pt-4 border-t">
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
+              {selectedRequest.status?.toLowerCase() === 'approved' ? (
+                <>
+                  <Check className="h-5 w-5 text-green-600" />
+                  <span className="font-medium text-green-700">Yêu cầu đã được phê duyệt</span>
+                </>
+              ) : selectedRequest.status?.toLowerCase() === 'rejected' ? (
+                <>
+                  <X className="h-5 w-5 text-red-600" />
+                  <span className="font-medium text-red-700">Yêu cầu đã bị từ chối</span>
+                </>
+              ) : null}
+              {selectedRequest.updated_at && (
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {formatDate(selectedRequest.updated_at)}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -176,18 +534,18 @@ const ApprovalsPage = () => {
 
       {/* --- TABS --- */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-muted mb-6 w-full sm:w-auto grid grid-cols-3 sm:inline-flex">
+        <TabsList className="bg-muted mb-6 w-full sm:w-auto grid grid-cols-2 sm:inline-flex">
           <TabsTrigger value="requests" className="gap-2">
             <Clock className="h-4 w-4" /> <span className="hidden sm:inline">Yêu cầu</span>
-            <Badge variant="destructive" className="ml-1">{pendingRequests.length}</Badge>
+            {pendingRequestsCount > 0 && (
+              <Badge variant="destructive" className="ml-1">
+                {pendingRequestsCount}
+              </Badge>
+            )}
           </TabsTrigger>
           <TabsTrigger value="accounts" className="gap-2">
             <UserCheck className="h-4 w-4" /> <span className="hidden sm:inline">Tài khoản</span>
             <Badge variant="secondary" className="ml-1">{accountRequests.length}</Badge>
-          </TabsTrigger>
-          <TabsTrigger value="passwords" className="gap-2">
-            <KeyRound className="h-4 w-4" /> <span className="hidden sm:inline">Mật khẩu</span>
-            <Badge variant="secondary" className="ml-1">{passwordRequests.length}</Badge>
           </TabsTrigger>
         </TabsList>
 
@@ -206,46 +564,153 @@ const ApprovalsPage = () => {
             ))}
           </div>
 
-          <div className="grid gap-4">
-            {filteredRequests.map((request, index) => {
-              const Icon = typeIcons[request.type];
-              return (
-                <motion.div
-                  key={request.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <Card className="hover:shadow-lg transition-shadow border-l-4 border-l-primary">
-                    <CardContent className="p-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="flex items-start gap-4">
-                          <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                            <Icon className="h-6 w-6 text-primary" />
-                          </div>
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2 mb-1">
-                              <p className="font-semibold text-foreground">{request.applicantName}</p>
-                              <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-                                {typeLabels[request.type]}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground">Mã hộ: {request.householdCode}</p>
-                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                                <Clock className="w-3 h-3" /> Gửi lúc: {request.submittedAt}
-                            </p>
-                          </div>
-                        </div>
-                        <Button variant="outline" onClick={() => setSelectedRequest(request)}>
-                          <Eye className="h-4 w-4 mr-1" /> Xem xét
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              );
-            })}
+          {/* Bộ lọc chế độ xem: Chờ xử lý / Lịch sử */}
+          <div className="flex gap-2 mb-4 p-1 bg-muted rounded-lg w-fit">
+            <Button
+              variant={viewStatus === 'Pending' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewStatus('Pending')}
+              className={viewStatus === 'Pending' ? 'bg-primary text-primary-foreground' : ''}
+            >
+              Đang chờ xử lý
+            </Button>
+            <Button
+              variant={viewStatus === 'History' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewStatus('History')}
+              className={viewStatus === 'History' ? 'bg-primary text-primary-foreground' : ''}
+            >
+              Lịch sử phê duyệt
+            </Button>
           </div>
+
+          {loadingRequests ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <span className="ml-2 text-muted-foreground">Đang tải danh sách...</span>
+            </div>
+          ) : filteredRequests.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center">
+              <Clock className="h-12 w-12 text-muted-foreground mb-3" />
+              <p className="text-muted-foreground">
+                {viewStatus === 'Pending' 
+                  ? 'Không có yêu cầu nào chờ duyệt' 
+                  : 'Không có yêu cầu nào trong lịch sử'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {filteredRequests.map((request, index) => {
+                const Icon = typeIcons[request.type] || Clock;
+                const displayName = request.full_name || request.applicant_name || 'Không có tên';
+                const displayHouseholdCode = request.household_code || 'Chưa có';
+                const displayType = typeLabels[request.type] || request.type;
+                const requestStatus = request.status?.toLowerCase();
+                
+                // Xác định loại yêu cầu để phân biệt màu Badge
+                const isTamTru = request.type === 'TamTru' || request.type === 'tam_tru';
+                const isTamVang = request.type === 'TamVang' || request.type === 'tam_vang';
+                
+                // Format thời gian
+                const formatDate = (dateString: string) => {
+                  if (!dateString) return 'Chưa có';
+                  try {
+                    const date = new Date(dateString);
+                    return date.toLocaleString('vi-VN', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                  } catch {
+                    return dateString;
+                  }
+                };
+                const displayDate = formatDate(request.created_at || '');
+                const displayUpdatedDate = request.updated_at ? formatDate(request.updated_at) : null;
+
+                return (
+                  <motion.div
+                    key={request.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                  >
+                    <Card className="hover:shadow-lg transition-shadow border-l-4 border-l-primary">
+                      <CardContent className="p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-start gap-4">
+                            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                              <Icon className="h-6 w-6 text-primary" />
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <p className="font-semibold text-foreground">{displayName}</p>
+                                {/* Badge phân biệt màu sắc: TamTru = Xanh dương, TamVang = Vàng */}
+                                {isTamTru ? (
+                                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                    {displayType}
+                                  </Badge>
+                                ) : isTamVang ? (
+                                  <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
+                                    {displayType}
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
+                                    {displayType}
+                                  </Badge>
+                                )}
+                                {/* Hiển thị Badge trạng thái khi ở chế độ History */}
+                                {viewStatus === 'History' && (
+                                  <>
+                                    {requestStatus === 'approved' && (
+                                      <Badge className="bg-green-500 text-white border-0">
+                                        Đã duyệt
+                                      </Badge>
+                                    )}
+                                    {requestStatus === 'rejected' && (
+                                      <Badge variant="destructive" className="bg-red-500 text-white border-0">
+                                        Đã từ chối
+                                      </Badge>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground">Mã hộ: {displayHouseholdCode}</p>
+                              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                                <Clock className="w-3 h-3" /> Gửi lúc: {displayDate}
+                              </p>
+                              {/* Hiển thị ngày duyệt nếu có */}
+                              {viewStatus === 'History' && displayUpdatedDate && (
+                                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                                  {requestStatus === 'approved' ? '✓' : '✗'} Xử lý lúc: {displayUpdatedDate}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          {/* Chỉ hiển thị nút "Xem xét" khi ở chế độ Pending */}
+                          {viewStatus === 'Pending' ? (
+                            <Button variant="outline" onClick={() => setSelectedRequest(request)}>
+                              <Eye className="h-4 w-4 mr-1" /> Xem xét
+                            </Button>
+                          ) : (
+                            <Button 
+                              variant="ghost" 
+                              onClick={() => setSelectedRequest(request)}
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <Eye className="h-4 w-4 mr-1" /> Xem chi tiết
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </TabsContent>
 
         {/* 2. Accounts Tab Content */}
@@ -257,8 +722,19 @@ const ApprovalsPage = () => {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="divide-y divide-border">
-                {accountRequests.map((account, index) => (
+              {loadingAccounts ? (
+                <div className="flex items-center justify-center p-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  <span className="ml-2 text-muted-foreground">Đang tải danh sách...</span>
+                </div>
+              ) : accountRequests.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-8 text-center">
+                  <UserCheck className="h-12 w-12 text-muted-foreground mb-3" />
+                  <p className="text-muted-foreground">Không có tài khoản nào chờ duyệt</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {accountRequests.map((account, index) => (
                   <motion.div
                     key={account.id}
                     initial={{ opacity: 0 }}
@@ -283,46 +759,9 @@ const ApprovalsPage = () => {
                       <Eye className="h-4 w-4 mr-1" /> Chi tiết
                     </Button>
                   </motion.div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* 3. Passwords Tab Content */}
-        <TabsContent value="passwords">
-          <Card className="border-l-4 border-l-orange-500">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <KeyRound className="h-5 w-5 text-orange-500" /> Duyệt đổi mật khẩu
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="divide-y divide-border">
-                {passwordRequests.map((pwd, index) => (
-                  <motion.div
-                    key={pwd.id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: index * 0.1 }}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 hover:bg-muted/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="h-10 w-10 rounded-full bg-orange-100 flex items-center justify-center">
-                        <KeyRound className="h-5 w-5 text-orange-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-foreground">{pwd.name}</p>
-                        <p className="text-sm text-muted-foreground truncate max-w-[200px]">{pwd.reason}</p>
-                        <p className="text-xs text-muted-foreground">{pwd.submittedAt}</p>
-                      </div>
-                    </div>
-                    <Button className="bg-green-600 hover:bg-green-700 text-white" size="sm" onClick={() => setSelectedPassword(pwd)}>
-                      <Check className="h-4 w-4 mr-1" /> Duyệt
-                    </Button>
-                  </motion.div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -344,73 +783,7 @@ const ApprovalsPage = () => {
             </DialogTitle>
           </DialogHeader>
 
-          {selectedRequest && (
-            <div className="space-y-6">
-              {/* Header Info */}
-              <div className="rounded-lg bg-muted/30 p-4 border border-border/50">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-bold text-lg text-primary">{selectedRequest.applicantName}</h3>
-                  <Badge variant="outline" className="px-3 py-1 bg-white">{typeLabels[selectedRequest.type]}</Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <UserCheck className="h-4 w-4" /> {selectedRequest.householdCode}
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Clock className="h-4 w-4" /> {selectedRequest.submittedAt}
-                  </div>
-                </div>
-              </div>
-
-              {/* Dynamic Details */}
-              <div className="space-y-3">
-                <h4 className="font-medium flex items-center gap-2 text-sm text-muted-foreground">
-                  <FileText className="h-4 w-4" /> Nội dung kê khai
-                </h4>
-                <div className="bg-background rounded-lg border border-border p-4 space-y-3">
-                  {Object.entries(selectedRequest.details).map(([key, value]) => (
-                    <div key={key} className="flex justify-between text-sm border-b border-dashed border-border last:border-0 pb-2 last:pb-0">
-                      <span className="text-muted-foreground capitalize">{key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ')}</span>
-                      <span className="font-medium text-right">{String(value)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="space-y-4 pt-2 border-t pt-4">
-                 {showRejectInput && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
-                    <Label className="mb-2 block text-destructive font-semibold">Lý do từ chối (*)</Label>
-                    <Textarea 
-                      placeholder="Nhập lý do chi tiết..." 
-                      value={rejectReason} 
-                      onChange={(e) => setRejectReason(e.target.value)} 
-                      className="border-destructive/50 focus-visible:ring-destructive"
-                    />
-                  </motion.div>
-                )}
-                
-                <div className="flex gap-3">
-                  {!showRejectInput ? (
-                    <>
-                      <Button variant="outline" className="flex-1 hover:bg-destructive/10 hover:text-destructive hover:border-destructive" onClick={() => setShowRejectInput(true)}>
-                        <X className="h-4 w-4 mr-2" /> Từ chối
-                      </Button>
-                      <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={handleApprove}>
-                        <Check className="h-4 w-4 mr-2" /> Phê duyệt ngay
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button variant="ghost" onClick={() => setShowRejectInput(false)}>Hủy</Button>
-                      <Button variant="destructive" className="flex-1" onClick={handleReject}>Xác nhận từ chối</Button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
+          {renderRequestDetail()}
         </DialogContent>
       </Dialog>
 
@@ -481,71 +854,23 @@ const ApprovalsPage = () => {
               </div>
 
               <DialogFooter className="gap-2 sm:gap-0 pt-4 border-t">
-                <Button variant="outline" onClick={() => setSelectedAccount(null)} className="w-full sm:w-auto">Hủy bỏ</Button>
-                <Button className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAccountApprove}>
-                  <Check className="h-4 w-4 mr-2" /> Xác thực & Kích hoạt
+                <Button variant="outline" onClick={() => setSelectedAccount(null)} className="w-full sm:w-auto" disabled={approvingUserId === selectedAccount?.id}>
+                  Hủy bỏ
                 </Button>
-              </DialogFooter>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* 3. Password Detail Dialog */}
-      <Dialog open={!!selectedPassword} onOpenChange={() => setSelectedPassword(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-orange-700">
-              <Shield className="h-5 w-5 text-orange-500" />
-              Yêu cầu cấp lại mật khẩu
-            </DialogTitle>
-          </DialogHeader>
-
-          {selectedPassword && (
-            <div className="space-y-6">
-              {/* Alert Box */}
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 flex gap-3">
-                 <div className="bg-white p-2 rounded-full h-8 w-8 flex items-center justify-center shrink-0 border border-orange-100">
-                    <KeyRound className="h-4 w-4 text-orange-500" />
-                 </div>
-                 <div>
-                    <h4 className="text-sm font-bold text-orange-800">Cảnh báo bảo mật</h4>
-                    <p className="text-xs text-orange-700 mt-1 leading-relaxed">
-                       Vui lòng xác minh danh tính qua điện thoại trước khi phê duyệt yêu cầu này để tránh rủi ro chiếm đoạt tài khoản.
-                    </p>
-                 </div>
-              </div>
-
-              <div className="space-y-4">
-                 <div className="grid grid-cols-2 gap-4 text-sm bg-muted/20 p-4 rounded-lg border border-border/50">
-                    <div>
-                       <p className="text-muted-foreground mb-1 text-xs uppercase">Người yêu cầu</p>
-                       <p className="font-medium">{selectedPassword.name}</p>
-                    </div>
-                    <div>
-                       <p className="text-muted-foreground mb-1 text-xs uppercase">Mã hộ</p>
-                       <p className="font-medium">{selectedPassword.householdCode}</p>
-                    </div>
-                    <div>
-                       <p className="text-muted-foreground mb-1 text-xs uppercase">Số điện thoại</p>
-                       <p className="font-medium">{selectedPassword.phone}</p>
-                    </div>
-                     <div>
-                       <p className="text-muted-foreground mb-1 text-xs uppercase">Lần đăng nhập cuối</p>
-                       <p className="font-medium">{selectedPassword.lastLogin}</p>
-                    </div>
-                 </div>
-
-                 <div className="bg-muted p-3 rounded-lg border border-border">
-                    <p className="text-xs text-muted-foreground mb-1">Lý do yêu cầu</p>
-                    <p className="text-sm font-medium italic">"{selectedPassword.reason}"</p>
-                 </div>
-              </div>
-
-              <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t">
-                <Button variant="ghost" onClick={() => setSelectedPassword(null)}>Đóng</Button>
-                <Button className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white" onClick={handlePasswordApprove}>
-                   <Check className="h-4 w-4 mr-2" /> Phê duyệt & Gửi Email
+                <Button 
+                  className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white" 
+                  onClick={handleAccountApprove}
+                  disabled={approvingUserId === selectedAccount?.id}
+                >
+                  {approvingUserId === selectedAccount?.id ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Đang xử lý...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4 mr-2" /> Xác thực & Kích hoạt
+                    </>
+                  )}
                 </Button>
               </DialogFooter>
             </div>

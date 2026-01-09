@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Send, MessageSquare, Clock, CheckCircle2, 
-  AlertCircle, CornerDownRight, User 
+  AlertCircle, CornerDownRight, User, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -17,52 +17,99 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { createReportAPI, getMyReportsAPI } from '@/services/apiService';
+import { formatDate, formatDateTime } from '@/utils/formatDate';
 
-// --- MOCK DATA: Lịch sử phản ánh của User ---
-const MOCK_HISTORY = [
-  {
-    id: 1,
-    category: 've_sinh',
-    categoryLabel: 'Vệ sinh môi trường',
-    title: 'Rác thải hành lang tầng 5 chưa dọn',
-    content: 'Từ sáng đến giờ (14h) rác vẫn để đầy hành lang bốc mùi hôi. Đề nghị BQL nhắc nhở đội vệ sinh.',
-    date: '20/12/2024',
-    status: 'resolved', // Đã xử lý
-    adminResponse: 'Chào bạn, BQL đã tiếp nhận và yêu cầu tổ vệ sinh xử lý ngay lúc 14h30. Rất xin lỗi vì sự bất tiện này.',
-    adminName: 'Ban Quản Lý'
-  },
-  {
-    id: 2,
-    category: 'an_ninh',
-    categoryLabel: 'An ninh trật tự',
-    title: 'Người lạ phát tờ rơi',
-    content: 'Có người lạ vào gõ cửa từng nhà phát tờ rơi quảng cáo internet lúc 19h tối.',
-    date: '22/12/2024',
-    status: 'pending', // Chờ xử lý
-    adminResponse: null, // Chưa có phản hồi
-    adminName: null
-  }
-];
+// Interface cho dữ liệu Report từ API
+interface Report {
+  id: string;
+  user_id: string;
+  title: string;
+  content: string;
+  category: string;
+  status: 'Pending' | 'Processing' | 'Resolved';
+  created_at: string;
+  admin_response?: string | null;
+}
+
+// Map category sang label tiếng Việt
+const CATEGORY_MAP: Record<string, string> = {
+  'VeSinh': 'Vệ sinh môi trường',
+  'AnNinh': 'An ninh trật tự',
+  'KyThuat': 'Hạ tầng - Kỹ thuật',
+  'HanhChinh': 'Dịch vụ - Tiện ích',
+  'an_ninh': 'An ninh trật tự',
+  've_sinh': 'Vệ sinh môi trường',
+  'ha_tang': 'Hạ tầng - Kỹ thuật',
+  'dich_vu': 'Dịch vụ - Tiện ích',
+  'khac': 'Khác',
+};
+
+// Map category từ Frontend sang Backend
+const CATEGORY_TO_BACKEND: Record<string, string> = {
+  'VeSinh': 've_sinh',
+  'AnNinh': 'an_ninh',
+  'KyThuat': 'ha_tang',
+  'HanhChinh': 'dich_vu',
+};
 
 const FeedbackPage = () => {
   const { toast } = useToast();
-  const [category, setCategory] = useState('');
+  
+  // State quản lý Form
   const [title, setTitle] = useState('');
+  const [category, setCategory] = useState('');
   const [content, setContent] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // State quản lý Danh sách (Lịch sử)
+  const [reports, setReports] = useState<Report[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Fetch danh sách phản ánh khi trang load
+  useEffect(() => {
+    const fetchReports = async () => {
+      setIsLoading(true);
+      try {
+        const response = await getMyReportsAPI();
+        if (response.success && response.data) {
+          setReports(response.data);
+        }
+      } catch (error: any) {
+        console.error('Error fetching reports:', error);
+        toast({
+          title: 'Lỗi',
+          description: error.message || 'Không thể tải lịch sử phản ánh',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchReports();
+  }, []);
 
   // Hàm render Badge trạng thái
   const renderStatus = (status: string) => {
     switch (status) {
+      case 'Resolved':
       case 'resolved':
         return <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-0"><CheckCircle2 className="w-3 h-3 mr-1"/> Đã xử lý</Badge>;
+      case 'Pending':
       case 'pending':
         return <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100 border-0"><Clock className="w-3 h-3 mr-1"/> Chờ xử lý</Badge>;
+      case 'Processing':
+      case 'processing':
+        return <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100 border-0"><AlertCircle className="w-3 h-3 mr-1"/> Đang xử lý</Badge>;
       default:
         return <Badge variant="outline">Đang xem xét</Badge>;
     }
   };
 
-  const handleSubmit = () => {
+  // Hàm gửi phản ánh
+  const handleSendReport = async () => {
+    // Kiểm tra dữ liệu rỗng
     if (!category || !title || !content) {
       toast({
         title: 'Lỗi',
@@ -72,13 +119,46 @@ const FeedbackPage = () => {
       return;
     }
 
-    toast({
-      title: 'Thành công',
-      description: 'Đã gửi phản ánh của bạn! BQL sẽ phản hồi sớm nhất.',
-    });
-    setCategory('');
-    setTitle('');
-    setContent('');
+    setIsSubmitting(true);
+    try {
+      // Map category từ Frontend sang Backend format
+      const backendCategory = CATEGORY_TO_BACKEND[category] || category;
+
+      // Gọi API POST /api/reports
+      const response = await createReportAPI({
+        title,
+        category: backendCategory,
+        content,
+      });
+
+      if (response.success) {
+        // Nếu thành công: Alert "Gửi thành công", xóa trắng form
+        toast({
+          title: 'Thành công',
+          description: 'Đã gửi phản ánh của bạn! BQL sẽ phản hồi sớm nhất.',
+        });
+
+        // Xóa trắng form
+        setTitle('');
+        setCategory('');
+        setContent('');
+
+        // Gọi lại hàm lấy danh sách để cập nhật ngay lập tức
+        const reportsResponse = await getMyReportsAPI();
+        if (reportsResponse.success && reportsResponse.data) {
+          setReports(reportsResponse.data);
+        }
+      }
+    } catch (error: any) {
+      console.error('Error sending report:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể gửi phản ánh. Vui lòng thử lại.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -109,11 +189,10 @@ const FeedbackPage = () => {
                   <SelectValue placeholder="Chọn vấn đề" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="an_ninh">An ninh trật tự</SelectItem>
-                  <SelectItem value="ve_sinh">Vệ sinh môi trường</SelectItem>
-                  <SelectItem value="ha_tang">Hạ tầng - Kỹ thuật</SelectItem>
-                  <SelectItem value="dich_vu">Dịch vụ - Tiện ích</SelectItem>
-                  <SelectItem value="khac">Khác</SelectItem>
+                  <SelectItem value="VeSinh">Vệ sinh môi trường</SelectItem>
+                  <SelectItem value="AnNinh">An ninh trật tự</SelectItem>
+                  <SelectItem value="KyThuat">Hạ tầng - Kỹ thuật</SelectItem>
+                  <SelectItem value="HanhChinh">Dịch vụ - Tiện ích</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -125,6 +204,7 @@ const FeedbackPage = () => {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="bg-background"
+                disabled={isSubmitting}
               />
             </div>
           </div>
@@ -136,13 +216,27 @@ const FeedbackPage = () => {
               value={content}
               onChange={(e) => setContent(e.target.value)}
               className="min-h-[120px] bg-background resize-none"
+              disabled={isSubmitting}
             />
           </div>
 
           <div className="flex justify-end">
-            <Button className="gradient-primary px-6" onClick={handleSubmit}>
-              <Send className="h-4 w-4 mr-2" />
-              Gửi phản ánh
+            <Button 
+              className="gradient-primary px-6" 
+              onClick={handleSendReport}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Đang gửi...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4 mr-2" />
+                  Gửi phản ánh
+                </>
+              )}
             </Button>
           </div>
         </div>
@@ -159,60 +253,61 @@ const FeedbackPage = () => {
         </h2>
         
         <div className="space-y-4">
-          {MOCK_HISTORY.length > 0 ? (
-            MOCK_HISTORY.map((item) => (
-              <div key={item.id} className="rounded-xl bg-card p-5 shadow-sm border border-border/60 hover:shadow-md transition-shadow">
-                {/* Header của Card: Tiêu đề + Trạng thái */}
-                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 mb-3">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
-                        {item.categoryLabel}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">• {item.date}</span>
+          {isLoading ? (
+            <div className="text-center py-8 bg-card rounded-xl border border-dashed">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">Đang tải lịch sử phản ánh...</p>
+            </div>
+          ) : reports.length > 0 ? (
+            reports.map((item) => {
+              const categoryLabel = CATEGORY_MAP[item.category] || item.category || 'Khác';
+              const formattedDate = formatDate(item.created_at);
+              
+              return (
+                <div key={item.id} className="rounded-xl bg-card p-5 shadow-sm border border-border/60 hover:shadow-md transition-shadow">
+                  {/* Header của Card: Tiêu đề + Trạng thái */}
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 mb-3">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
+                          {categoryLabel}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">• {formattedDate}</span>
+                      </div>
+                      <h3 className="font-bold text-base text-foreground">{item.title}</h3>
                     </div>
-                    <h3 className="font-bold text-base text-foreground">{item.title}</h3>
+                    <div className="shrink-0">
+                      {renderStatus(item.status)}
+                    </div>
                   </div>
-                  <div className="shrink-0">
-                    {renderStatus(item.status)}
+
+                  {/* Nội dung người dùng gửi */}
+                  <div className="bg-muted/30 p-3 rounded-lg text-sm text-foreground/90 mb-4">
+                    {item.content}
                   </div>
-                </div>
 
-                {/* Nội dung người dùng gửi */}
-                <div className="bg-muted/30 p-3 rounded-lg text-sm text-foreground/90 mb-4">
-                  {item.content}
-                </div>
-
-                {/* --- PHẦN PHẢN HỒI TỪ ADMIN --- */}
-                {item.adminResponse ? (
-                  <div className="relative mt-4 pl-4 md:pl-0">
-                    {/* Đường nối visual */}
-                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary/20 rounded-full md:hidden"></div>
-                    
-                    <div className="bg-primary/5 border border-primary/10 rounded-lg p-4 ml-2 md:ml-8 relative">
-                      <CornerDownRight className="absolute -left-3 top-[-10px] w-6 h-6 text-primary/40 hidden md:block" />
-                      
+                  {/* --- PHẦN PHẢN HỒI TỪ ADMIN --- */}
+                  {item.admin_response ? (
+                    <div className="bg-blue-50 p-3 rounded-lg mt-2 border border-blue-200">
                       <div className="flex items-center gap-2 mb-2">
-                        <div className="h-6 w-6 rounded-full gradient-primary flex items-center justify-center">
+                        <div className="h-6 w-6 rounded-full bg-blue-500 flex items-center justify-center">
                           <User className="h-3 w-3 text-white" />
                         </div>
-                        <span className="font-semibold text-sm text-primary">Ban Quản Lý</span>
-                        <span className="text-xs text-muted-foreground">đã phản hồi</span>
+                        <strong className="text-sm text-blue-800">Ban Quản lý:</strong>
                       </div>
-                      
-                      <p className="text-sm text-foreground leading-relaxed">
-                        {item.adminResponse}
+                      <p className="text-sm text-blue-800 leading-relaxed">
+                        {item.admin_response}
                       </p>
                     </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground italic mt-2 ml-1">
-                    <AlertCircle className="w-3 h-3" />
-                    Đang chờ Ban quản lý phản hồi...
-                  </div>
-                )}
-              </div>
-            ))
+                  ) : (
+                    <div className="flex items-center gap-2 text-gray-400 text-sm mt-2 italic">
+                      <Clock className="w-3 h-3" />
+                      <span>⏳ Đang chờ phản hồi...</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           ) : (
             <div className="text-center py-8 bg-card rounded-xl border border-dashed">
               <p className="text-sm text-muted-foreground">Chưa có lịch sử phản ánh nào.</p>

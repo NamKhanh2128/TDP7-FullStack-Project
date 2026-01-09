@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Search, Eye, GitBranch, Users, MapPin, Home, Phone, Calendar, 
   FileText, UserCircle, ArrowRight, CreditCard, Save, X, Edit, 
-  CheckCircle2, Trash2, Briefcase, Info, Map, ChevronRight
+  CheckCircle2, Trash2, Briefcase, Info, Map, ChevronRight, Plus
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,16 +16,31 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from '@/hooks/use-toast';
-import { allHouseholds, Household, HouseholdMember } from '@/data/mockData';
+import { Household, HouseholdMember } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { createHouseholdAPI, getAllHouseholdsAPI, getHouseholdByIdAPI } from '@/services/apiService';
+
+// Interface cho dữ liệu từ API
+interface HouseholdFromAPI {
+  id: string;
+  code: string;
+  address: string;
+  area: number;
+  owner_name: string | null;
+  member_count: number;
+  created_at?: string;
+}
 
 const HouseholdsPage = () => {
   const { toast } = useToast();
   const [search, setSearch] = useState('');
-  const [listHouseholds, setListHouseholds] = useState<Household[]>(allHouseholds);
+  const [households, setHouseholds] = useState<Household[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   
   // States
   const [viewHousehold, setViewHousehold] = useState<Household | null>(null);
+  const [householdDetail, setHouseholdDetail] = useState<any>(null); // Dữ liệu chi tiết từ API
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editFormData, setEditFormData] = useState<Household | null>(null);
   const [showConfirmSave, setShowConfirmSave] = useState(false);
@@ -33,19 +48,73 @@ const HouseholdsPage = () => {
   const [splitHousehold, setSplitHousehold] = useState<Household | null>(null);
   const [splitStep, setSplitStep] = useState(1);
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  
+  // States cho Modal thêm hộ khẩu
+  const [showAddHouseholdModal, setShowAddHouseholdModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newHouseholdForm, setNewHouseholdForm] = useState({
+    household_code: '',
+    address: '',
+    owner_email: '',
+    area: '0',
+  });
 
   // Filters
-  const filteredHouseholds = listHouseholds.filter(h =>
+  const filteredHouseholds = households.filter(h =>
     h.code.toLowerCase().includes(search.toLowerCase()) ||
-    h.members.some(m => m.role === 'Chủ hộ' && m.name.toLowerCase().includes(search.toLowerCase())) ||
+    (h.members && h.members.some(m => m.role === 'Chủ hộ' && m.name.toLowerCase().includes(search.toLowerCase()))) ||
     h.address.toLowerCase().includes(search.toLowerCase())
   );
 
   const handleOpenDetail = (household: Household) => {
     setViewHousehold(household);
-    setEditFormData(JSON.parse(JSON.stringify(household)));
     setIsEditing(false);
+    // Sẽ fetch data từ API trong useEffect
   };
+
+  // Fetch chi tiết hộ khẩu khi viewHousehold thay đổi
+  useEffect(() => {
+    const fetchHouseholdDetail = async () => {
+      if (!viewHousehold?.id) {
+        setHouseholdDetail(null);
+        return;
+      }
+
+      setIsLoadingDetail(true);
+      try {
+        const response = await getHouseholdByIdAPI(viewHousehold.id);
+        if (response.success && response.data) {
+          setHouseholdDetail(response.data);
+          // Map dữ liệu từ API sang format Household để editFormData
+          const mappedHousehold: Household = {
+            id: response.data.id,
+            code: response.data.code,
+            address: response.data.address,
+            area: response.data.area || 0,
+            members: response.data.members || [],
+          };
+          setEditFormData(mappedHousehold);
+        } else {
+          toast({
+            title: 'Lỗi',
+            description: response.message || 'Không thể tải thông tin hộ khẩu',
+            variant: 'destructive',
+          });
+        }
+      } catch (error: any) {
+        console.error('Error fetching household detail:', error);
+        toast({
+          title: 'Lỗi',
+          description: error.message || 'Không thể tải thông tin hộ khẩu',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsLoadingDetail(false);
+      }
+    };
+
+    fetchHouseholdDetail();
+  }, [viewHousehold?.id]);
 
   const handleMemberChange = (memberId: string, field: keyof HouseholdMember, value: any) => {
     if (!editFormData) return;
@@ -57,7 +126,7 @@ const HouseholdsPage = () => {
 
   const handleConfirmSave = () => {
     if (editFormData) {
-      setListHouseholds(listHouseholds.map(h => h.id === editFormData.id ? editFormData : h));
+      setHouseholds(households.map(h => h.id === editFormData.id ? editFormData : h));
       setViewHousehold(editFormData);
     }
     setShowConfirmSave(false);
@@ -79,6 +148,111 @@ const HouseholdsPage = () => {
 
   const newHeadOfHousehold = splitHousehold?.members.find(m => selectedMembers.includes(m.id))?.name || 'Chưa chọn';
 
+  // Hàm fetch danh sách hộ khẩu từ API
+  const fetchHouseholds = async () => {
+    setIsLoading(true);
+    try {
+      const response = await getAllHouseholdsAPI();
+      if (response.success && response.data) {
+        // Chuyển đổi dữ liệu từ API sang format Household
+        const mappedHouseholds: (Household & { member_count?: number })[] = response.data.map((h: HouseholdFromAPI) => ({
+          id: h.id,
+          code: h.code,
+          address: h.address,
+          area: h.area || 0,
+          member_count: h.member_count || 0, // Lưu member_count từ API
+          members: h.owner_name ? [
+            {
+              id: `${h.id}-owner`,
+              name: h.owner_name,
+              role: 'Chủ hộ' as any,
+              dob: '',
+              gender: 'Nam' as any,
+              idCard: '',
+              idIssueDate: '',
+              idIssuePlace: '',
+              ethnicity: '',
+              religion: '',
+              occupation: '',
+              workplace: '',
+              registrationDate: '',
+              previousAddress: '',
+            }
+          ] : [],
+        }));
+        setHouseholds(mappedHouseholds);
+      } else {
+        setHouseholds([]);
+      }
+    } catch (error: any) {
+      console.error('Error fetching households:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể tải danh sách hộ khẩu từ server.',
+        variant: 'destructive',
+      });
+      setHouseholds([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Fetch data khi component mount
+  useEffect(() => {
+    fetchHouseholds();
+  }, []);
+
+  // Hàm xử lý thêm hộ khẩu
+  const handleCreateHousehold = async () => {
+    // Validation
+    if (!newHouseholdForm.household_code || !newHouseholdForm.address || !newHouseholdForm.owner_email) {
+      toast({
+        title: 'Lỗi',
+        description: 'Vui lòng điền đầy đủ thông tin',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      const response = await createHouseholdAPI({
+        household_code: newHouseholdForm.household_code,
+        address: newHouseholdForm.address,
+        owner_email: newHouseholdForm.owner_email,
+        area: parseFloat(newHouseholdForm.area) || 0,
+      });
+      
+      if (response.success) {
+        toast({
+          title: 'Thành công',
+          description: response.message || 'Đã thêm hộ khẩu thành công',
+        });
+        
+        // Gọi hàm fetch lại danh sách từ server (QUAN TRỌNG)
+        await fetchHouseholds();
+        
+        // Đóng modal và reset form (sau khi fetch xong)
+        setShowAddHouseholdModal(false);
+        setNewHouseholdForm({
+          household_code: '',
+          address: '',
+          owner_email: '',
+          area: '0',
+        });
+      }
+    } catch (error: any) {
+      console.error('Error creating household:', error);
+      toast({
+        title: 'Lỗi',
+        description: error.message || 'Không thể tạo hộ khẩu. Vui lòng thử lại.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   return (
     <div className="p-6 space-y-6 bg-slate-50/50 min-h-screen">
       {/* HEADER SECTION */}
@@ -86,17 +260,26 @@ const HouseholdsPage = () => {
         <div>
           <h1 className="text-xl font-semibold text-slate-800">Quản lý hộ khẩu</h1>
           <p className="text-slate-500 text-sm mt-0.5 flex items-center gap-2 font-medium">
-            <Users className="h-4 w-4 text-blue-500" /> Tổng số {listHouseholds.length} hộ gia đình
+            <Users className="h-4 w-4 text-blue-500" /> Tổng số {households.length} hộ gia đình
           </p>
         </div>
-        <div className="relative w-80">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input 
-            placeholder="Tìm kiếm mã hộ, chủ hộ..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 bg-slate-50 border-slate-200 rounded-lg focus:ring-blue-500"
-          />
+        <div className="flex items-center gap-3">
+          <div className="relative w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input 
+              placeholder="Tìm kiếm mã hộ, chủ hộ..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 bg-slate-50 border-slate-200 rounded-lg focus:ring-blue-500"
+            />
+          </div>
+          <Button
+            onClick={() => setShowAddHouseholdModal(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 rounded-lg px-4 py-2 shadow-sm"
+          >
+            <Plus className="h-4 w-4" />
+            Thêm hộ khẩu
+          </Button>
         </div>
       </div>
 
@@ -113,31 +296,54 @@ const HouseholdsPage = () => {
             </TableRow>
           </TableHeader>
           <TableBody className="bg-white">
-            {filteredHouseholds.map((household) => {
-              const head = household.members.find(m => m.role === 'Chủ hộ') || household.members[0];
-              return (
-                <TableRow key={household.id} className="hover:bg-blue-50/30 transition-colors border-b last:border-none">
-                  <TableCell className="font-medium text-blue-600">{household.code}</TableCell>
-                  <TableCell className="font-medium text-slate-700">{head.name}</TableCell>
-                  <TableCell className="max-w-[300px] truncate text-slate-500 text-sm">{household.address}</TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant="secondary" className="bg-blue-50 text-blue-600 font-medium border-none">
-                      {household.members.length}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right pr-4">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => handleOpenDetail(household)} className="text-slate-500 hover:text-blue-600 hover:bg-blue-50">
-                        <Eye className="h-4 w-4 mr-1.5" /> Chi tiết
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleSplitStart(household)} className="text-slate-500 hover:text-cyan-600 hover:bg-cyan-50">
-                        <GitBranch className="h-4 w-4 mr-1.5" /> Tách hộ
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center py-8 text-slate-500">
+                  Đang tải dữ liệu...
+                </TableCell>
+              </TableRow>
+            ) : filteredHouseholds.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center py-8 text-slate-500">
+                  {search ? 'Không tìm thấy hộ khẩu nào phù hợp' : 'Chưa có dữ liệu hộ khẩu'}
+                </TableCell>
+              </TableRow>
+            ) : (
+              filteredHouseholds.map((household) => {
+                const head = household.members && household.members.length > 0 
+                  ? (household.members.find(m => m.role === 'Chủ hộ') || household.members[0])
+                  : null;
+                // Sử dụng member_count từ API nếu có, nếu không thì tính từ members.length
+                const memberCount = (household as any).member_count !== undefined 
+                  ? (household as any).member_count 
+                  : (household.members ? household.members.length : 0);
+                
+                return (
+                  <TableRow key={household.id} className="hover:bg-blue-50/30 transition-colors border-b last:border-none">
+                    <TableCell className="font-medium text-blue-600">{household.code}</TableCell>
+                    <TableCell className="font-medium text-slate-700">
+                      {head ? head.name : 'Chưa có chủ hộ'}
+                    </TableCell>
+                    <TableCell className="max-w-[300px] truncate text-slate-500 text-sm">{household.address}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="secondary" className="bg-blue-50 text-blue-600 font-medium border-none">
+                        {memberCount}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right pr-4">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => handleOpenDetail(household)} className="text-slate-500 hover:text-blue-600 hover:bg-blue-50">
+                          <Eye className="h-4 w-4 mr-1.5" /> Chi tiết
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleSplitStart(household)} className="text-slate-500 hover:text-cyan-600 hover:bg-cyan-50">
+                          <GitBranch className="h-4 w-4 mr-1.5" /> Tách hộ
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
           </TableBody>
         </Table>
       </Card>
@@ -151,9 +357,15 @@ const HouseholdsPage = () => {
                 <Home className="h-5.5 w-5.5" />
               </div>
               <div>
-                <DialogTitle className="text-lg font-semibold text-slate-900">Hồ sơ hộ khẩu: {editFormData?.code}</DialogTitle>
+                <DialogTitle className="text-lg font-semibold text-slate-900">
+                  Hồ sơ hộ khẩu: {householdDetail?.code || editFormData?.code || 'Đang tải...'}
+                </DialogTitle>
                 <DialogDescription className="flex items-center gap-1.5 font-medium text-slate-500 mt-0.5 text-sm">
-                  <MapPin className="h-3.5 w-3.5 text-cyan-500" /> {editFormData?.address}
+                  <MapPin className="h-3.5 w-3.5 text-cyan-500" /> 
+                  {householdDetail?.address || editFormData?.address || 'Đang tải...'}
+                  {householdDetail?.owner_name && (
+                    <span className="ml-2 text-slate-400">• Chủ hộ: {householdDetail.owner_name}</span>
+                  )}
                 </DialogDescription>
               </div>
             </div>
@@ -171,14 +383,18 @@ const HouseholdsPage = () => {
           </DialogHeader>
 
           <ScrollArea className="flex-1 bg-slate-50/50">
-            {editFormData && (
+            {isLoadingDetail ? (
+              <div className="p-6 text-center py-12">
+                <p className="text-slate-500">Đang tải dữ liệu...</p>
+              </div>
+            ) : householdDetail && editFormData ? (
               <div className="p-6 space-y-6">
                 {/* THÔNG TIN HÀNH CHÍNH HỘ */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {[
-                    { icon: Calendar, label: "Ngày đăng ký thường trú", value: editFormData.members[0].registrationDate, field: 'registrationDate', color: "text-blue-600", bg: "bg-blue-50" },
-                    { icon: Map, label: "Địa chỉ cũ", value: editFormData.members[0].previousAddress, field: 'previousAddress', color: "text-cyan-600", bg: "bg-cyan-50" },
-                    { icon: Users, label: "Quy mô hộ khẩu", value: `${editFormData.members.length} nhân khẩu`, color: "text-indigo-600", bg: "bg-indigo-50" }
+                    { icon: Calendar, label: "Ngày đăng ký thường trú", value: editFormData.members?.[0]?.registrationDate || 'Chưa có', field: 'registrationDate', color: "text-blue-600", bg: "bg-blue-50" },
+                    { icon: Map, label: "Địa chỉ cũ", value: editFormData.members?.[0]?.previousAddress || 'Chưa có', field: 'previousAddress', color: "text-cyan-600", bg: "bg-cyan-50" },
+                    { icon: Users, label: "Quy mô hộ khẩu", value: `${householdDetail.members?.length || 0} nhân khẩu`, color: "text-indigo-600", bg: "bg-indigo-50" }
                   ].map((item, idx) => (
                     <div key={idx} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-center gap-4">
                       <div className={cn("p-2.5 rounded-lg", item.bg)}>
@@ -206,83 +422,155 @@ const HouseholdsPage = () => {
 
                 {/* DANH SÁCH THÀNH VIÊN */}
                 <div className="space-y-4">
-                  {editFormData.members.map((member) => (
-                    <div key={member.id} className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden group hover:border-blue-200 transition-all">
-                      <div className="bg-slate-50/50 px-5 py-2.5 border-b flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <UserCircle className="h-4 w-4 text-slate-400" />
-                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Chi tiết nhân khẩu</span>
-                        </div>
-                        <Badge className={cn("rounded-full px-3 py-0.5 font-medium border-none shadow-none", 
-                          member.role === 'Chủ hộ' ? "bg-blue-600/10 text-blue-600" : "bg-cyan-500/10 text-cyan-600")}>
-                          {member.role}
-                        </Badge>
-                      </div>
+                  {householdDetail.members && householdDetail.members.length > 0 ? (
+                    <>
+                      {householdDetail.members.map((member: any) => {
+                      // Tạo avatar từ tên (lấy chữ cái đầu)
+                      const getInitials = (name: string) => {
+                        if (!name) return '?';
+                        const words = name.trim().split(' ');
+                        if (words.length >= 2) {
+                          return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+                        }
+                        return name[0].toUpperCase();
+                      };
 
-                      <div className="p-5 grid grid-cols-1 md:grid-cols-4 gap-6">
-                        {/* Nhóm 1: Cơ bản */}
-                        <div className="space-y-4">
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-slate-400 font-medium uppercase">Họ và tên</Label>
-                            {isEditing ? <Input value={member.name} onChange={(e) => handleMemberChange(member.id, 'name', e.target.value)} className="h-8 text-sm" /> : <p className="font-semibold text-slate-800">{member.name}</p>}
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Ngày sinh</Label>
-                              {isEditing ? <Input value={member.dob} onChange={(e) => handleMemberChange(member.id, 'dob', e.target.value)} className="h-8 text-xs" /> : <p className="font-medium text-slate-700 text-sm">{member.dob}</p>}
+                      return (
+                        <div key={member.id} className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden group hover:border-blue-200 transition-all">
+                          <div className="bg-slate-50/50 px-5 py-2.5 border-b flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                              {/* Avatar tự tạo */}
+                              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center text-white text-xs font-semibold shadow-sm">
+                                {getInitials(member.name || '')}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <UserCircle className="h-4 w-4 text-slate-400" />
+                                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Chi tiết nhân khẩu</span>
+                              </div>
                             </div>
-                            <div className="space-y-1">
-                              <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Giới tính</Label>
-                              {isEditing ? <Input value={member.gender} onChange={(e) => handleMemberChange(member.id, 'gender', e.target.value)} className="h-8 text-xs" /> : <p className="font-medium text-slate-700 text-sm">{member.gender}</p>}
-                            </div>
+                            <Badge className={cn("rounded-full px-3 py-0.5 font-medium border-none shadow-none", 
+                              member.role === 'Chủ hộ' ? "bg-blue-600 text-white" : "bg-cyan-500/10 text-cyan-600")}>
+                              {member.role || 'Chưa xác định'}
+                            </Badge>
                           </div>
-                        </div>
 
-                        {/* Nhóm 2: Định danh */}
-                        <div className="space-y-4">
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-slate-400 font-medium uppercase leading-none">Số CCCD/CMND</Label>
-                            {isEditing ? <Input value={member.idCard} onChange={(e) => handleMemberChange(member.id, 'idCard', e.target.value)} className="h-8 text-sm" /> : <p className="font-semibold text-slate-800 font-mono text-sm tracking-tight">{member.idCard}</p>}
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Ngày cấp</Label>
-                              <p className="font-medium text-slate-700 text-xs">{member.idIssueDate}</p>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-4 gap-6">
+                            {/* Nhóm 1: Cơ bản */}
+                            <div className="space-y-4">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-slate-400 font-medium uppercase">Họ và tên</Label>
+                                {isEditing ? (
+                                  <Input 
+                                    value={member.name || ''} 
+                                    onChange={(e) => handleMemberChange(member.id, 'name', e.target.value)} 
+                                    className="h-8 text-sm" 
+                                  />
+                                ) : (
+                                  <p className="font-semibold text-slate-800">{member.name || 'Chưa có'}</p>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Ngày sinh</Label>
+                                  {isEditing ? (
+                                    <Input 
+                                      value={member.dob || ''} 
+                                      onChange={(e) => handleMemberChange(member.id, 'dob', e.target.value)} 
+                                      className="h-8 text-xs" 
+                                    />
+                                  ) : (
+                                    <p className="font-medium text-slate-700 text-sm">{member.dob || 'Chưa có'}</p>
+                                  )}
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Giới tính</Label>
+                                  {isEditing ? (
+                                    <Input 
+                                      value={member.gender || ''} 
+                                      onChange={(e) => handleMemberChange(member.id, 'gender', e.target.value)} 
+                                      className="h-8 text-xs" 
+                                    />
+                                  ) : (
+                                    <p className="font-medium text-slate-700 text-sm">{member.gender || 'Chưa có'}</p>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                            <div className="space-y-1">
-                              <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Nơi cấp</Label>
-                              <p className="font-medium text-slate-700 text-[10px] leading-tight line-clamp-1">{member.idIssuePlace}</p>
+
+                            {/* Nhóm 2: Định danh */}
+                            <div className="space-y-4">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-slate-400 font-medium uppercase leading-none">Số CCCD/CMND</Label>
+                                {isEditing ? (
+                                  <Input 
+                                    value={member.idCard || ''} 
+                                    onChange={(e) => handleMemberChange(member.id, 'idCard', e.target.value)} 
+                                    className="h-8 text-sm" 
+                                  />
+                                ) : (
+                                  <p className="font-semibold text-slate-800 font-mono text-sm tracking-tight">{member.idCard || 'Chưa có'}</p>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Ngày cấp</Label>
+                                  <p className="font-medium text-slate-700 text-xs">{member.idIssueDate || 'Chưa có'}</p>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[10px] text-slate-400 font-medium uppercase text-nowrap">Nơi cấp</Label>
+                                  <p className="font-medium text-slate-700 text-[10px] leading-tight line-clamp-1">{member.idIssuePlace || 'Chưa có'}</p>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Nhóm 3: Công việc */}
+                            <div className="space-y-4">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-slate-400 font-medium uppercase">Nghề nghiệp</Label>
+                                {isEditing ? (
+                                  <Input 
+                                    value={member.occupation || ''} 
+                                    onChange={(e) => handleMemberChange(member.id, 'occupation', e.target.value)} 
+                                    className="h-8 text-sm" 
+                                  />
+                                ) : (
+                                  <p className="font-medium text-slate-800 text-sm">{member.occupation || 'Chưa có'}</p>
+                                )}
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-slate-400 font-medium uppercase leading-none">Nơi làm việc</Label>
+                                <p className="text-slate-600 text-xs mt-1 leading-relaxed line-clamp-2">{member.workplace || 'Chưa có'}</p>
+                              </div>
+                            </div>
+
+                            {/* Nhóm 4: Văn hóa */}
+                            <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] text-slate-400 font-medium uppercase leading-none">Dân tộc / Tôn giáo</Label>
+                                <p className="font-semibold text-slate-800 text-sm">
+                                  {member.ethnicity || 'Chưa có'} / {member.religion || 'Chưa có'}
+                                </p>
+                              </div>
+                              <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
+                                <p className="text-[9px] text-slate-400 font-semibold tracking-wider italic">CSDL DÂN CƯ</p>
+                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                              </div>
                             </div>
                           </div>
                         </div>
-
-                        {/* Nhóm 3: Công việc */}
-                        <div className="space-y-4">
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-slate-400 font-medium uppercase">Nghề nghiệp</Label>
-                            {isEditing ? <Input value={member.occupation} onChange={(e) => handleMemberChange(member.id, 'occupation', e.target.value)} className="h-8 text-sm" /> : <p className="font-medium text-slate-800 text-sm">{member.occupation}</p>}
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-slate-400 font-medium uppercase leading-none">Nơi làm việc</Label>
-                            <p className="text-slate-600 text-xs mt-1 leading-relaxed line-clamp-2">{member.workplace}</p>
-                          </div>
-                        </div>
-
-                        {/* Nhóm 4: Văn hóa */}
-                        <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-slate-400 font-medium uppercase leading-none">Dân tộc / Tôn giáo</Label>
-                            <p className="font-semibold text-slate-800 text-sm">{member.ethnicity} / {member.religion}</p>
-                          </div>
-                          <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
-                            <p className="text-[9px] text-slate-400 font-semibold tracking-wider italic">CSDL DÂN CƯ</p>
-                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                          </div>
-                        </div>
-                      </div>
+                      );
+                      })}
+                    </>
+                  ) : (
+                    <div className="text-center py-8 text-slate-500">
+                      Chưa có thành viên nào trong hộ khẩu này
                     </div>
-                  ))}
+                  )}
                 </div>
+              </div>
+            ) : (
+              <div className="p-6 text-center py-12">
+                <p className="text-slate-500">Không tìm thấy thông tin hộ khẩu</p>
               </div>
             )}
           </ScrollArea>
@@ -338,6 +626,92 @@ const HouseholdsPage = () => {
             </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* --- MODAL THÊM HỘ KHẨU MỚI --- */}
+      <Dialog open={showAddHouseholdModal} onOpenChange={setShowAddHouseholdModal}>
+        <DialogContent className="max-w-md rounded-2xl p-0 overflow-hidden border-none shadow-2xl">
+          <DialogHeader className="p-6 bg-white border-b">
+            <div className="h-11 w-11 bg-blue-50 rounded-xl flex items-center justify-center mb-4">
+              <Plus className="h-5 w-5 text-blue-600" />
+            </div>
+            <DialogTitle className="text-xl font-semibold text-slate-900">Thêm hộ khẩu mới</DialogTitle>
+            <DialogDescription className="font-medium text-slate-500 mt-1">
+              Nhập thông tin hộ khẩu và email chủ hộ để tạo mới
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="p-6 space-y-4 bg-white">
+            <div className="space-y-2">
+              <Label htmlFor="household_code" className="text-sm font-semibold text-slate-700">
+                Mã hộ khẩu <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="household_code"
+                placeholder="Ví dụ: TDP7-2024-003"
+                value={newHouseholdForm.household_code}
+                onChange={(e) => setNewHouseholdForm({ ...newHouseholdForm, household_code: e.target.value })}
+                className="rounded-lg border-slate-200 focus:ring-blue-500"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="address" className="text-sm font-semibold text-slate-700">
+                Địa chỉ <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="address"
+                placeholder="Nhập địa chỉ thường trú đầy đủ"
+                value={newHouseholdForm.address}
+                onChange={(e) => setNewHouseholdForm({ ...newHouseholdForm, address: e.target.value })}
+                className="rounded-lg border-slate-200 focus:ring-blue-500"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="owner_email" className="text-sm font-semibold text-slate-700">
+                Email chủ hộ <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="owner_email"
+                type="email"
+                placeholder="email@example.com"
+                value={newHouseholdForm.owner_email}
+                onChange={(e) => setNewHouseholdForm({ ...newHouseholdForm, owner_email: e.target.value })}
+                className="rounded-lg border-slate-200 focus:ring-blue-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Hệ thống sẽ tìm và gán người này làm chủ hộ
+              </p>
+            </div>
+          </div>
+          
+          <DialogFooter className="p-6 bg-white border-t gap-3 flex-row items-center sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowAddHouseholdModal(false);
+                setNewHouseholdForm({
+                  household_code: '',
+                  address: '',
+                  owner_email: '',
+                });
+              }}
+              className="rounded-lg border-slate-200"
+              disabled={isCreating}
+            >
+              Hủy
+            </Button>
+            <Button
+              onClick={handleCreateHousehold}
+              disabled={isCreating}
+              className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+            >
+              {isCreating ? 'Đang tạo...' : 'Lưu'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* --- SPLIT DIALOG (ĐỒNG BỘ MÀU BLUE-CYAN) --- */}
       <Dialog open={!!splitHousehold} onOpenChange={(open) => !open && setSplitHousehold(null)}>
