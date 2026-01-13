@@ -1,0 +1,169 @@
+const { getPool, closePool, sql } = require('../src/config/dbConfig');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+
+/**
+ * Seed script for demo database
+ * Creates: 1 Admin, 2 Users, 2 Households, 2 HouseholdMembers
+ * All passwords: 123456
+ * 
+ * Run: npm run seed
+ */
+
+const STANDARD_PASSWORD = '123456';
+
+async function seed() {
+  let pool;
+  
+  try {
+    console.log('🌱 Starting database seed...\n');
+    
+    pool = await getPool();
+    console.log('✅ Database connected\n');
+    
+    // Clean existing data
+    console.log('🗑️  Cleaning existing data...');
+    const tables = [
+      'HouseholdMember',
+      'User',
+      'Household'
+    ];
+    
+    for (const table of tables) {
+      try {
+        await pool.request().query(`DELETE FROM [${table}]`);
+        console.log(`   ✓ Cleared ${table}`);
+      } catch (error) {
+        console.log(`   ⚠️  Table ${table} may not exist, continuing...`);
+      }
+    }
+    console.log('');
+    
+    // Hash password once
+    const hashedPassword = await bcrypt.hash(STANDARD_PASSWORD, 10);
+    
+    // Create Households
+    console.log('🏠 Creating households...');
+    const household1Id = crypto.randomUUID();
+    const household2Id = crypto.randomUUID();
+    
+    await pool.request()
+      .input('id', sql.NVarChar, household1Id)
+      .input('code', sql.NVarChar, 'TDP7-2024-001')
+      .input('address', sql.NVarChar, 'Số 123, Đường ABC, Phường XYZ, Quận 1, TP.HCM')
+      .input('area', sql.Float, 60.5)
+      .query('INSERT INTO [Household] (id, code, address, area, created_at) VALUES (@id, @code, @address, @area, GETDATE())');
+    
+    await pool.request()
+      .input('id', sql.NVarChar, household2Id)
+      .input('code', sql.NVarChar, 'TDP7-2024-002')
+      .input('address', sql.NVarChar, 'Số 456, Đường DEF, Phường UVW, Quận 2, TP.HCM')
+      .input('area', sql.Float, 45.0)
+      .query('INSERT INTO [Household] (id, code, address, area, created_at) VALUES (@id, @code, @address, @area, GETDATE())');
+    console.log('   ✓ Created 2 households\n');
+    
+    // Create Admin
+    console.log('👤 Creating admin account...');
+    const adminId = crypto.randomUUID();
+    
+    await pool.request()
+      .input('id', sql.NVarChar, adminId)
+      .input('full_name', sql.NVarChar, 'Quản trị viên')
+      .input('email', sql.NVarChar, 'admin@gmail.com')
+      .input('password', sql.NVarChar, hashedPassword)
+      .input('phone', sql.NVarChar, '0901234567')
+      .input('role', sql.NVarChar, 'admin')
+      .input('status', sql.NVarChar, 'active')
+      .query('INSERT INTO [User] (id, full_name, email, password, phone, role, status, created_at) VALUES (@id, @full_name, @email, @password, @phone, @role, @status, GETDATE())');
+    console.log(`   ✓ Admin: admin@gmail.com / ${STANDARD_PASSWORD}\n`);
+    
+    // Create User 1
+    console.log('👨 Creating user 1...');
+    const user1Id = crypto.randomUUID();
+    
+    await pool.request()
+      .input('id', sql.NVarChar, user1Id)
+      .input('full_name', sql.NVarChar, 'Nguyễn Văn A')
+      .input('email', sql.NVarChar, 'test@gmail.com')
+      .input('password', sql.NVarChar, hashedPassword)
+      .input('phone', sql.NVarChar, '0912345678')
+      .input('role', sql.NVarChar, 'user')
+      .input('status', sql.NVarChar, 'active')
+      .input('household_id', sql.NVarChar, household1Id)
+      .input('dob', sql.Date, '1990-01-15')
+      .input('gender', sql.NVarChar, 'Nam')
+      .input('cccd', sql.NVarChar, '001234567890')
+      .query('INSERT INTO [User] (id, full_name, email, password, phone, role, status, household_id, dob, gender, cccd, created_at) VALUES (@id, @full_name, @email, @password, @phone, @role, @status, @household_id, @dob, @gender, @cccd, GETDATE())');
+    console.log(`   ✓ User 1: test@gmail.com / ${STANDARD_PASSWORD}\n`);
+    
+    // Create User 2
+    console.log('👩 Creating user 2...');
+    const user2Id = crypto.randomUUID();
+    
+    await pool.request()
+      .input('id', sql.NVarChar, user2Id)
+      .input('full_name', sql.NVarChar, 'Trần Thị B')
+      .input('email', sql.NVarChar, 'wife@gmail.com')
+      .input('password', sql.NVarChar, hashedPassword)
+      .input('phone', sql.NVarChar, '0923456789')
+      .input('role', sql.NVarChar, 'user')
+      .input('status', sql.NVarChar, 'active')
+      .input('household_id', sql.NVarChar, household1Id)
+      .input('dob', sql.Date, '1992-05-20')
+      .input('gender', sql.NVarChar, 'Nữ')
+      .input('cccd', sql.NVarChar, '001234567891')
+      .query('INSERT INTO [User] (id, full_name, email, password, phone, role, status, household_id, dob, gender, cccd, created_at) VALUES (@id, @full_name, @email, @password, @phone, @role, @status, @household_id, @dob, @gender, @cccd, GETDATE())');
+    console.log(`   ✓ User 2: wife@gmail.com / ${STANDARD_PASSWORD}\n`);
+    
+    // Create HouseholdMembers
+    console.log('🔄 Creating household members...');
+    const member1Id = crypto.randomUUID();
+    const member2Id = crypto.randomUUID();
+    
+    await pool.request()
+      .input('id', sql.NVarChar, member1Id)
+      .input('household_id', sql.NVarChar, household1Id)
+      .input('name', sql.NVarChar, 'Nguyễn Văn A')
+      .input('role', sql.NVarChar, 'Chủ hộ')
+      .input('dob', sql.Date, '1990-01-15')
+      .input('gender', sql.NVarChar, 'Nam')
+      .input('idCard', sql.NVarChar, '001234567890')
+      .query('INSERT INTO [HouseholdMember] (id, household_id, name, role, dob, gender, idCard) VALUES (@id, @household_id, @name, @role, @dob, @gender, @idCard)');
+    
+    await pool.request()
+      .input('id', sql.NVarChar, member2Id)
+      .input('household_id', sql.NVarChar, household1Id)
+      .input('name', sql.NVarChar, 'Trần Thị B')
+      .input('role', sql.NVarChar, 'Vợ/Chồng')
+      .input('dob', sql.Date, '1992-05-20')
+      .input('gender', sql.NVarChar, 'Nữ')
+      .input('idCard', sql.NVarChar, '001234567891')
+      .query('INSERT INTO [HouseholdMember] (id, household_id, name, role, dob, gender, idCard) VALUES (@id, @household_id, @name, @role, @dob, @gender, @idCard)');
+    console.log('   ✓ Created 2 household members\n');
+    
+    // Summary
+    console.log('✅ Seed completed!\n');
+    console.log('📊 Summary:');
+    console.log('   - 2 Households');
+    console.log('   - 1 Admin (admin@gmail.com / 123456)');
+    console.log('   - 2 Users (test@gmail.com, wife@gmail.com / 123456)');
+    console.log('   - 2 HouseholdMembers\n');
+    
+  } catch (error) {
+    console.error('❌ Seed error:', error);
+    throw error;
+  } finally {
+    await closePool();
+  }
+}
+
+// Run seed
+seed()
+  .then(() => {
+    console.log('🎉 Done!');
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('💥 Error:', error);
+    process.exit(1);
+  });

@@ -1,0 +1,122 @@
+const { getPool, closePool, sql } = require('../src/config/dbConfig');
+const bcrypt = require('bcryptjs');
+
+/**
+ * Reset Admin Password Script
+ * 
+ * This script resets the admin@gmail.com password to '123456' (hashed).
+ * Useful as a backup if you forget the password or seeding fails.
+ * 
+ * Usage: node scripts/reset_admin_password.js
+ */
+
+async function resetAdminPassword() {
+  let pool;
+  
+  try {
+    console.log('🔐 Bắt đầu reset mật khẩu Admin...\n');
+    
+    // Kết nối database
+    pool = await getPool();
+    console.log('✅ Đã kết nối database\n');
+    
+    // Hash password '123456'
+    const STANDARD_PASSWORD = '123456';
+    const hashedPassword = await bcrypt.hash(STANDARD_PASSWORD, 10);
+    console.log(`🔑 Mật khẩu mới: ${STANDARD_PASSWORD} (đã hash)\n`);
+    
+    // Kiểm tra admin có tồn tại không
+    const checkResult = await pool.request()
+      .input('email', sql.NVarChar, 'admin@gmail.com')
+      .query(`
+        SELECT id, full_name, email, role 
+        FROM [AppUser] 
+        WHERE email = @email AND role = 'admin'
+      `);
+    
+    if (checkResult.recordset.length === 0) {
+      console.log('⚠️  Không tìm thấy admin với email admin@gmail.com');
+      console.log('   Đang tạo admin mới...\n');
+      
+      // Create admin if doesn't exist
+      const adminId = require('crypto').randomUUID();
+      await pool.request()
+        .input('id', sql.NVarChar, adminId)
+        .input('full_name', sql.NVarChar, 'Quản trị viên')
+        .input('email', sql.NVarChar, 'admin@gmail.com')
+        .input('password', sql.NVarChar, hashedPassword)
+        .input('phone', sql.NVarChar, '0901234567')
+        .input('role', sql.NVarChar, 'admin')
+        .input('status', sql.NVarChar, 'active')
+        .query(`
+          INSERT INTO [AppUser] (id, full_name, email, password, phone, role, status, created_at)
+          VALUES (@id, @full_name, @email, @password, @phone, @role, @status, GETDATE())
+        `);
+      
+      console.log('✅ Đã tạo admin mới:');
+      console.log(`   ID: ${adminId}`);
+      console.log(`   Email: admin@gmail.com`);
+      console.log(`   Password: ${STANDARD_PASSWORD}\n`);
+    } else {
+      const admin = checkResult.recordset[0];
+      
+      // Update password
+      await pool.request()
+        .input('email', sql.NVarChar, 'admin@gmail.com')
+        .input('password', sql.NVarChar, hashedPassword)
+        .query(`
+          UPDATE [AppUser] 
+          SET password = @password, updated_at = GETDATE()
+          WHERE email = @email AND role = 'admin'
+        `);
+      
+      console.log('✅ Đã reset mật khẩu admin:');
+      console.log(`   ID: ${admin.id}`);
+      console.log(`   Tên: ${admin.full_name}`);
+      console.log(`   Email: ${admin.email}`);
+      console.log(`   Password mới: ${STANDARD_PASSWORD}\n`);
+    }
+    
+    // Verify the password works
+    console.log('🔍 Đang xác minh mật khẩu...');
+    const verifyResult = await pool.request()
+      .input('email', sql.NVarChar, 'admin@gmail.com')
+      .query(`
+        SELECT password FROM [AppUser] WHERE email = @email AND role = 'admin'
+      `);
+    
+    if (verifyResult.recordset.length > 0) {
+      const storedHash = verifyResult.recordset[0].password;
+      const isValid = await bcrypt.compare(STANDARD_PASSWORD, storedHash);
+      
+      if (isValid) {
+        console.log('✅ Xác minh thành công! Mật khẩu đã được cập nhật đúng.\n');
+      } else {
+        console.log('⚠️  Cảnh báo: Mật khẩu không khớp sau khi cập nhật.\n');
+      }
+    }
+    
+    console.log('📝 Thông tin đăng nhập:');
+    console.log('   Email: admin@gmail.com');
+    console.log('   Password: 123456');
+    console.log('\n🎉 Hoàn thành!\n');
+    
+  } catch (error) {
+    console.error('❌ Lỗi khi reset mật khẩu admin:', error);
+    throw error;
+  } finally {
+    await closePool();
+  }
+}
+
+// Chạy script
+resetAdminPassword()
+  .then(() => {
+    console.log('✅ Script hoàn thành!');
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('💥 Lỗi:', error);
+    process.exit(1);
+  });
+
